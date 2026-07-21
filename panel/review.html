@@ -1,0 +1,200 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>copilot review</title>
+<style>
+  :root {
+    --bg:#141518; --panel:#191b1f; --fg:#e9e9ea; --muted:#8b8d94;
+    --rule:#2b2d33; --accent:#d8b46a; --up:#5fa87a; --down:#b3695f; --me:#6f9ad8;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;overflow:hidden}
+  body{
+    background:var(--bg); color:var(--fg);
+    font:14px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;
+    display:grid; grid-template-columns: 1fr 380px; grid-template-rows: minmax(0, 1fr);
+    height:100dvh; overflow:hidden;
+  }
+
+  /* left: video + captions */
+  .stage{display:flex;flex-direction:column;min-width:0;min-height:0;border-right:1px solid var(--rule)}
+  video{width:100%;background:#000;flex:none;max-height:52vh}
+  .bar{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--rule);font-size:12px;color:var(--muted)}
+  #clock{font-variant-numeric:tabular-nums;color:var(--fg)}
+  #dot{width:7px;height:7px;border-radius:50%;background:var(--rule)}
+  #dot.armed{background:var(--up)}
+  .caption{
+    position:relative;   /* make this the offsetParent so offsetTop is pane-relative */
+    flex:1; min-height:0; overflow-y:auto; padding:12px 14px; font-size:14px; line-height:1.6;
+    -webkit-mask-image:linear-gradient(to bottom,transparent,#000 24px);
+  }
+  .cap{color:#5e6068;transition:color .2s}
+  .cap.now{color:var(--fg)}
+  .cap.me{color:var(--me)}
+  .cap .t{color:#4a4c53;font-variant-numeric:tabular-nums;margin-right:8px;font-size:12px}
+
+  /* right: cards */
+  .rail{display:flex;flex-direction:column;background:var(--panel);min-width:0;min-height:0}
+  .rail header{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--rule);font-size:12px;color:var(--muted)}
+  #count{margin-left:auto}
+  .feed{flex:1;min-height:0;overflow-y:auto;padding:10px 12px}
+  .empty{color:var(--muted);font-style:italic;padding-top:8px}
+
+  .card{
+    padding:11px 0;border-bottom:1px solid var(--rule);
+    animation:pop .35s ease-out;
+  }
+  .card:last-child{border-bottom:0}
+  @keyframes pop{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+  .when{font-size:11px;color:var(--accent);font-variant-numeric:tabular-nums;cursor:pointer;letter-spacing:.02em}
+  .when:hover{text-decoration:underline}
+  .q{font-size:14.5px;font-weight:600;line-height:1.35;margin-top:3px}
+  .meta{margin-top:6px;font-size:12.5px;color:var(--muted)}
+  .meta b{color:#b6b8bf;font-weight:600}
+  .actions{margin-top:8px;display:flex;gap:6px}
+  button{
+    background:transparent;color:var(--muted);border:1px solid var(--rule);
+    border-radius:5px;padding:3px 9px;font-size:12px;cursor:pointer;font-family:inherit;
+  }
+  button:hover{color:var(--fg);border-color:#43464d}
+  button.voted-up{color:var(--up);border-color:var(--up)}
+  button.voted-down{color:var(--down);border-color:var(--down)}
+</style>
+
+<div class="stage">
+  <video id="v" src="/video" controls preload="metadata"></video>
+  <div class="bar">
+    <span id="dot"></span>
+    <span id="clock">00:00</span>
+    <span id="pending"></span>
+  </div>
+  <div class="caption" id="caps"></div>
+</div>
+
+<div class="rail">
+  <header>
+    <span>cards</span>
+    <span id="count">0</span>
+  </header>
+  <div class="feed" id="feed"><div class="empty" id="empty">Play the recording. Cards appear at the second they would have surfaced live.</div></div>
+</div>
+
+<script>
+const v = document.getElementById("v");
+const caps = document.getElementById("caps");
+const feed = document.getElementById("feed");
+const clock = document.getElementById("clock");
+const countEl = document.getElementById("count");
+const pendingEl = document.getElementById("pending");
+const dot = document.getElementById("dot");
+let emptyEl = document.getElementById("empty");
+
+let captions = [], cards = [];
+const shown = new Set();
+let capEls = [], lastCap = -1;
+
+const mmss = s => `${String(Math.floor(s/60)).padStart(2,"0")}:${String(Math.floor(s%60)).padStart(2,"0")}`;
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+fetch("/data").then(r => r.json()).then(d => {
+  captions = d.captions; cards = d.cards;
+  renderCaptions();
+  updatePending();
+  dot.className = "armed";
+});
+
+function renderCaptions() {
+  caps.innerHTML = "";
+  capEls = captions.map(c => {
+    const el = document.createElement("div");
+    el.className = "cap" + (c.ch === "me" ? " me" : "");
+    el.innerHTML = `<span class="t">${mmss(Math.max(0,c.vt))}</span>${esc(c.text)}`;
+    el.onclick = () => { v.currentTime = Math.max(0, c.vt - 1); };
+    caps.appendChild(el);
+    return el;
+  });
+}
+
+function updatePending() {
+  const left = cards.filter(c => !shown.has(c.id)).length;
+  pendingEl.textContent = left ? `${left} card${left===1?"":"s"} ahead` : "";
+}
+
+function vote(id, val, btn) {
+  fetch("/feedback", {method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({cardId:id,vote:val})});
+  btn.parentElement.querySelectorAll("button").forEach(b=>b.classList.remove("voted-up","voted-down"));
+  btn.classList.add(val==="up"?"voted-up":"voted-down");
+}
+
+function showCard(c) {
+  if (shown.has(c.id)) return;
+  shown.add(c.id);
+  emptyEl?.remove(); emptyEl = null;
+
+  const el = document.createElement("div");
+  el.className = "card";
+
+  const when = document.createElement("div");
+  when.className = "when";
+  when.textContent = `▸ ${mmss(c.vt)}`;
+  when.title = "jump to this moment";
+  when.onclick = () => { v.currentTime = Math.max(0, c.vt - 8); v.play(); };
+  el.appendChild(when);
+
+  const q = document.createElement("div");
+  q.className = "q"; q.textContent = c.question;
+  el.appendChild(q);
+
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  meta.innerHTML = `<b>why</b> ${esc(c.why)}<br><b>src</b> ${esc(c.source)}`;
+  el.appendChild(meta);
+
+  const actions = document.createElement("div");
+  actions.className = "actions";
+  const up = mk("👍", () => vote(c.id,"up",up));
+  const down = mk("👎", () => vote(c.id,"down",down));
+  actions.append(up, down);
+  el.appendChild(actions);
+
+  feed.prepend(el);
+  feed.scrollTop = 0;            // newest card is at the top; always show it
+  countEl.textContent = shown.size;
+  updatePending();
+}
+function mk(label, fn){const b=document.createElement("button");b.textContent=label;b.onclick=fn;return b}
+
+v.addEventListener("timeupdate", () => {
+  const t = v.currentTime;
+  clock.textContent = mmss(t);
+
+  // reveal any card whose moment has arrived
+  for (const c of cards) if (c.vt <= t) showCard(c);
+
+  // highlight the current caption and keep it in view
+  let i = 0;
+  while (i + 1 < captions.length && captions[i+1].vt <= t) i++;
+  if (i !== lastCap && capEls[i]) {
+    capEls[lastCap]?.classList.remove("now");
+    const el = capEls[i];
+    el.classList.add("now");
+    // offsetTop is relative to .caption (position:relative). Clamp so we can
+    // never overshoot to the bottom of a 15k-pixel list.
+    const target = el.offsetTop - caps.clientHeight / 2 + el.offsetHeight / 2;
+    const max = caps.scrollHeight - caps.clientHeight;
+    const want = Math.max(0, Math.min(target, max));
+    const top = el.offsetTop - caps.scrollTop;
+    const visible = top >= 0 && top + el.offsetHeight <= caps.clientHeight;
+    if (!visible) caps.scrollTo({ top: want, behavior: "smooth" });
+    lastCap = i;
+  }
+});
+
+// Cards still being generated by a running replay stream in here.
+const es = new EventSource("/events");
+es.onmessage = (e) => {
+  const c = JSON.parse(e.data);
+  if (!cards.some(x => x.id === c.id)) cards.push(c);
+  updatePending();
+  if (c.vt <= v.currentTime) showCard(c);
+};
+</script>

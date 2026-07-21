@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>io.meetingcopilot.meetingtap</string>
+	<key>CFBundleName</key>
+	<string>meetingtap</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>meetingtap captures your microphone to transcribe meetings for the live meeting copilot.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>meetingtap captures system audio (other meeting participants) to transcribe meetings for the live meeting copilot.</string>
+</dict>
+</plist>

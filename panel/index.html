@@ -1,0 +1,630 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>meeting copilot</title>
+<style>
+  /* Palette follows the system appearance: dark values are the base, the
+     prefers-color-scheme block re-maps every variable for light. No literal
+     colors below this block — everything routes through a variable. */
+  :root {
+    color-scheme: light dark;
+    --bg: #16171a;
+    --bg2: #101114;   /* recessed zones: header, NOW, capture telemetry */
+    --card: #1c1e23;  /* raised card surface */
+    --fg: #e9e9ea;
+    --muted: #8b8d94;
+    --rule: #2c2e33;
+    --accent: #d8b46a;
+    --up: #5fa87a;
+    --up-soft: rgba(95,168,122,.45);
+    --down: #b3695f;
+    --me: #6f9ad8;
+    --dim: #5c5e65;         /* section labels, latency, recall line */
+    --faint: #4f5157;       /* speaker tags, empty-state hints */
+    --strong: #b6b8bf;      /* emphasized meta text */
+    --hover-border: #43464d;
+    --tx: #6a6c73;          /* transcript base */
+    --tx-them: #85878e;
+    --tx-live: #a98f52;     /* in-progress partial */
+    --chip-fg: #c9cbd2;
+    --chip-bg: rgba(216,180,106,.10);
+    --chip-border: rgba(216,180,106,.28);
+    --guard-bg: rgba(216,180,106,.07);
+    --guard-fg: #d9c9a5;
+    --risk: #d9b98a;
+    --win: #8fc4a4;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f6f7;
+      --bg2: #ececee;
+      --card: #ffffff;
+      --fg: #1d1e21;
+      --muted: #606268;
+      --rule: #dddee2;
+      --accent: #9c7a26;
+      --up: #2e7a4e;
+      --up-soft: rgba(46,122,78,.45);
+      --down: #a24b40;
+      --me: #2e63a8;
+      --dim: #8b8d93;
+      --faint: #a2a4a9;
+      --strong: #3c3e44;
+      --hover-border: #b6b8bf;
+      --tx: #71737a;
+      --tx-them: #5d5f66;
+      --tx-live: #8b702c;
+      --chip-fg: #4c4e55;
+      --chip-bg: rgba(156,122,38,.09);
+      --chip-border: rgba(156,122,38,.35);
+      --guard-bg: rgba(156,122,38,.09);
+      --guard-fg: #71581f;
+      --risk: #8a6428;
+      --win: #2c6b45;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    display: flex; flex-direction: column;
+    -webkit-user-select: none; user-select: none;
+    overflow: hidden;
+  }
+  /* Content is copyable (cards, stakes, transcript, strips); the header and
+     buttons stay non-selectable so dragging the panel doesn't select text. */
+  main, #now, #capture { -webkit-user-select: text; user-select: text; cursor: text; }
+  main .actions, button { -webkit-user-select: none; user-select: none; cursor: pointer; }
+  header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; border-bottom: 1px solid var(--rule);
+    -webkit-app-region: drag;           /* drag the panel by its header */
+    font-size: 12px; color: var(--muted);
+    background: var(--bg2);
+  }
+  /* Hierarchy: telemetry zones (header, NOW, capture strips) sit recessed on
+     --bg2; the SUGGESTIONS feed stays on --bg as the hero surface. */
+  #now, #capture { background: var(--bg2); }
+  /* Scroll affordance: thin visible scrollbars wherever content can overflow,
+     and a bottom fade on the slides text while more remains below. */
+  main::-webkit-scrollbar, #tx::-webkit-scrollbar, .ocr::-webkit-scrollbar { width: 6px; }
+  main::-webkit-scrollbar-thumb, #tx::-webkit-scrollbar-thumb, .ocr::-webkit-scrollbar-thumb {
+    background: var(--rule); border-radius: 3px;
+  }
+  .ocr.scrollable { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 18px), transparent); }
+  /* card feed: fade the bottom edge while more cards remain below */
+  main.scrollable { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 34px), transparent); }
+  #dot { width: 7px; height: 7px; border-radius: 50%; background: var(--rule); flex: none;
+         transition: transform .15s ease-out, background .2s; }
+  #dot.listening { background: var(--up); }
+  #dot.thinking  { background: var(--accent); animation: pulse 1s ease-in-out infinite; }
+  #dot.nocap     { background: var(--down); animation: pulse 1.4s ease-in-out infinite; }
+  #dot.blip      { transform: scale(1.9); }     /* audio just arrived */
+  #status.warn   { color: var(--down); }
+  @keyframes pulse { 50% { opacity: .35; } }
+  /* hold-to-talk: press while YOU speak so the copilot attributes it to you and keeps
+     the mic (otherwise it is dropped as speaker echo of the call). */
+  /* left side stays clear for the traffic-light buttons; everything else sits
+     right-aligned: [count] [hold to talk] [status ●] */
+  header .hspace { flex: 1; }
+  #talk {
+    -webkit-app-region: no-drag;
+    font-size: 11px; padding: 2px 11px; border-radius: 11px;
+    border: 1px solid var(--rule); color: var(--muted); background: transparent;
+    cursor: pointer; font-family: inherit; white-space: nowrap; touch-action: none;
+  }
+  #talk:hover { color: var(--fg); border-color: var(--hover-border); }
+  #talk.live  { color: #fff; background: var(--up); border-color: var(--up); }
+  #count { margin-right: 2px; }
+
+  /* NOW strip: the copilot's live read — topic, speakers, goal bearing */
+  #now { padding: 6px 12px 7px; border-bottom: 1px solid var(--rule); font-size: 12px; line-height: 1.45; display: none; }
+  #now.on { display: block; }
+  #now .lbl { display: block; font-size: 10px; letter-spacing: .04em; text-transform: uppercase; color: var(--faint); }
+  #now .vrow { display: flex; gap: 7px; align-items: baseline; margin-top: 1px; }
+  #now .sub { flex: none; width: 56px; font-size: 10px; letter-spacing: .03em; text-transform: uppercase; color: var(--faint); }
+  #now .spk { color: var(--tx-them); font-weight: 500; }
+  /* header for the card feed */
+  #feedhdr { padding: 6px 12px 0; }
+  #feedhdr .lbl { font-size: 10px; letter-spacing: .04em; text-transform: uppercase; color: var(--faint); }
+  #now .topic { color: var(--fg); font-weight: 600; }
+  #now .spk { color: var(--muted); }
+  #now .goal { display: block; font-size: 11.5px; color: var(--muted); }
+  #now .goal .g-adv { color: var(--up); }
+  #now .goal .g-risk { color: var(--down); }
+  #now .goal .g-neutral { color: var(--dim); }
+
+  main { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; }
+
+  /* lower zone: what's being captured + interpreted. Subdued; cards stay the hero. */
+  #capture { border-top: 1px solid var(--rule); flex: none; display: flex; flex-direction: column; }
+  #topics {
+    display: flex; flex-wrap: wrap; gap: 5px; align-items: center;
+    padding: 7px 12px; border-bottom: 1px solid var(--rule); min-height: 30px;
+  }
+  #topics .lbl { font-size: 10px; letter-spacing: .04em; text-transform: uppercase; color: var(--dim); margin-right: 2px; }
+  .chip {
+    font-size: 11px; color: var(--chip-fg); background: var(--chip-bg);
+    border: 1px solid var(--chip-border); border-radius: 10px; padding: 1px 8px;
+    white-space: nowrap;
+  }
+  #topics .none { font-size: 11px; color: var(--faint); font-style: italic; }
+  /* live recall: which whole-repo records the copilot is cross-referencing right now */
+  #recall { padding: 4px 12px 5px; font-size: 10px; color: var(--dim); border-bottom: 1px solid var(--rule); display: none; }
+  #recall.on { display: block; }
+  #recall .lbl { letter-spacing: .04em; text-transform: uppercase; color: var(--faint); margin-right: 5px; }
+  #recall b { color: var(--tx-them); font-weight: 500; }
+  /* what the screen OCR is currently reading — the visual twin of the transcript strip.
+     "visuals" heads the section; speaker/slides are labeled sub-rows. Slides text
+     wraps and scrolls when the summary runs long. */
+  #screen { padding: 4px 12px 6px; font-size: 11px; color: var(--dim); border-bottom: 1px solid var(--rule); display: none; line-height: 1.5; }
+  #screen.on { display: block; }
+  #screen .lbl { display: block; letter-spacing: .04em; text-transform: uppercase; color: var(--faint); font-size: 10px; }
+  #screen .vrow { display: flex; gap: 7px; align-items: baseline; margin-top: 1px; }
+  #screen .sub { flex: none; width: 64px; font-size: 10px; letter-spacing: .03em; text-transform: uppercase; color: var(--faint); }
+  #screen .names { color: var(--tx-them); font-weight: 500; }
+  /* let the slides read like a page: grow up to ~75% of the panel before scrolling */
+  #screen .ocr { color: var(--dim); flex: 1; min-width: 0; white-space: normal; overflow-y: auto; max-height: 75vh; }
+  #screen .none { color: var(--faint); font-style: italic; }
+  /* audio: title row for the live transcript */
+  #audiohdr { padding: 4px 12px 0; }
+  #audiohdr .lbl { font-size: 10px; letter-spacing: .04em; text-transform: uppercase; color: var(--faint); }
+  #tx {
+    height: 108px; overflow-y: auto; padding: 6px 12px 10px;
+    font-size: 11.5px; line-height: 1.5; color: var(--tx);
+    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 18px);
+  }
+  #tx .ln { }
+  #tx .them { color: var(--tx-them); }
+  #tx .me { color: var(--me); }
+  #tx .live { color: var(--tx-live); }  /* in-progress partial */
+  #tx .who { color: var(--faint); margin-right: 5px; }
+
+  .empty { color: var(--muted); font-style: italic; padding-top: 6px; }
+
+  .card {
+    background: var(--card); border: 1px solid var(--rule); border-radius: 10px;
+    padding: 11px 13px; margin-bottom: 10px;
+  }
+  .card.live .q::after {                /* caret while streaming */
+    content: "▌"; color: var(--accent); animation: pulse .8s steps(1) infinite;
+  }
+  .q { font-size: 15px; font-weight: 600; line-height: 1.35; }
+  .meta { margin-top: 6px; font-size: 12.5px; color: var(--muted); }
+  .meta b { color: var(--strong); font-weight: 600; }
+  /* stakes: the risk under the topic, or the win worth reinforcing */
+  .stakes { margin-top: 5px; font-size: 12.5px; line-height: 1.4; }
+  .stakes.risk { color: var(--risk); }
+  .stakes.win  { color: var(--win); }
+  /* follow-ups: the questions to ask after the main one lands */
+  .fups { margin-top: 6px; font-size: 12px; color: var(--muted); line-height: 1.5; }
+  .fups .lbl { font-size: 10px; letter-spacing: .04em; text-transform: uppercase; color: var(--faint); display: block; }
+  .fups div::before { content: "↳ "; color: var(--faint); }
+  .stakes .sig { font-weight: 600; margin-right: 4px; }
+  /* a cited doc: click to open it in the editor */
+  a.doc { color: inherit; text-decoration: underline dotted; text-underline-offset: 2px; cursor: pointer; }
+  a.doc:hover { color: var(--fg); }
+  /* the fact's ORIGINAL artifact (doc/sheet/email/slack) — the primary link */
+  a.origin {
+    color: var(--me); cursor: pointer; text-decoration: none;
+    font-size: 12px; margin-left: 6px; white-space: nowrap;
+  }
+  a.origin:hover { text-decoration: underline; }
+  /* provenance: which retrieval channel found the card's anchor */
+  .via {
+    font-size: 10px; letter-spacing: .03em; color: var(--muted);
+    border: 1px solid var(--rule); border-radius: 8px; padding: 0 6px;
+    margin-left: 6px; vertical-align: 1px; white-space: nowrap;
+  }
+  .via.kwvec { color: var(--up); border-color: var(--up-soft); }
+
+  .actions { margin-top: 8px; display: flex; gap: 6px; }
+  button {
+    -webkit-app-region: no-drag;
+    background: transparent; color: var(--muted);
+    border: 1px solid var(--rule); border-radius: 5px;
+    padding: 3px 9px; font-size: 12px; cursor: pointer;
+    font-family: inherit;
+  }
+  button:hover { color: var(--fg); border-color: var(--hover-border); }
+  button.voted-up   { color: var(--up);   border-color: var(--up); }
+  button.voted-down { color: var(--down); border-color: var(--down); }
+  .lat { margin-left: auto; font-size: 11px; color: var(--dim); align-self: center; }
+
+  /* disclosure guard: quiet amber note, visually distinct from a question card */
+  .guard {
+    padding: 8px 10px; margin: 8px 0; border-left: 3px solid var(--accent);
+    background: var(--guard-bg); font-size: 13px; color: var(--guard-fg);
+  }
+  .guard b { color: var(--accent); font-weight: 600; }
+
+  /* end-of-meeting digest */
+  .digest {
+    margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--rule);
+    font-size: 12.5px; color: var(--muted); white-space: pre-wrap; line-height: 1.5;
+  }
+</style>
+
+<header>
+  <span class="hspace"></span>
+  <span id="count"></span>
+  <button id="talk">hold to talk</button>
+  <span id="status">connecting</span>
+  <span id="dot"></span>
+</header>
+<div id="now"></div>
+<div id="feedhdr"><span class="lbl">suggestions</span></div>
+<main id="feed"><div class="empty" id="empty">Listening. Cards appear only when there's something grounded to add.</div></main>
+<section id="capture">
+  <div id="topics"><span class="lbl">topics</span><span class="none" id="notopics">nothing relevant to the conversation yet</span></div>
+  <div id="screen"></div>
+  <div id="recall"></div>
+  <div id="audiohdr"><span class="lbl">audio</span></div>
+  <div id="tx"></div>
+</section>
+
+<script>
+const feed = document.getElementById("feed");
+// Bottom fade while more cards remain below the fold; cleared at the end.
+function updateFeedFade() {
+  feed.classList.toggle("scrollable", feed.scrollHeight - feed.scrollTop - feed.clientHeight > 8);
+}
+feed.addEventListener("scroll", updateFeedFade);
+new MutationObserver(updateFeedFade).observe(feed, { childList: true, subtree: true });
+const dot = document.getElementById("dot");
+const statusEl = document.getElementById("status");
+const countEl = document.getElementById("count");
+let emptyEl = document.getElementById("empty");   // let: the guard handler nulls it
+
+// hold-to-talk: while held, mic audio is attributed to the user; released, it is
+// dropped as speaker echo. Pointer capture keeps the release event even if the
+// cursor slides off the button; the server also auto-releases after a timeout.
+const talkBtn = document.getElementById("talk");
+let holding = false;
+function reflectTalk() {
+  talkBtn.classList.toggle("live", holding);
+  talkBtn.textContent = holding ? "talking…" : "hold to talk";
+}
+function setTalk(on) {
+  if (on === holding) return;
+  holding = on;
+  reflectTalk();
+  fetch("/talk", { method: "POST", headers: { "content-type": "application/json" },
+                   body: JSON.stringify({ state: on ? "down" : "up" }) }).catch(() => {});
+}
+talkBtn.addEventListener("pointerdown", (e) => { e.preventDefault(); try { talkBtn.setPointerCapture(e.pointerId); } catch {} setTalk(true); });
+talkBtn.addEventListener("pointerup", () => setTalk(false));
+talkBtn.addEventListener("pointercancel", () => setTalk(false));
+talkBtn.addEventListener("lostpointercapture", () => setTalk(false));
+
+let liveEl = null;      // the card element currently streaming
+let cards = 0;
+let capturing = null;   // null until the first capture heartbeat
+let screenOn = false;   // screentap alive: slides/screen text feeding the brain
+let thinking = false;
+
+// The dot tells the truth about AUDIO, not about the socket:
+//   red pulsing  = capture is not running / nothing heard — the failure to catch
+//   green        = capture alive ("listening")
+//   green blip   = a transcript line just arrived (speak and it flickers)
+//   amber pulse  = a brain call is in flight
+function render() {
+  if (capturing === false) {
+    dot.className = "nocap";
+    statusEl.textContent = "not hearing audio — is capture running?";
+    statusEl.className = "warn";
+    return;
+  }
+  statusEl.className = "";
+  if (thinking) { dot.className = "thinking"; statusEl.textContent = "thinking"; }
+  else if (capturing) { dot.className = "listening"; statusEl.textContent = "listening"; }
+  else { dot.className = ""; statusEl.textContent = "connecting"; }
+}
+function setState(s) { thinking = s === "thinking"; render(); }
+
+function ensureLive() {
+  if (liveEl) return liveEl;
+  emptyEl?.remove();
+  const el = document.createElement("div");
+  el.className = "card live";
+  el.innerHTML = '<div class="q"></div>';
+  feed.prepend(el);
+  liveEl = el;
+  return el;
+}
+
+function vote(cardId, v, btn) {
+  fetch("/feedback", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ cardId, vote: v }),
+  });
+  const group = btn.parentElement;
+  group.querySelectorAll("button").forEach(b => b.classList.remove("voted-up", "voted-down"));
+  btn.classList.add(v === "up" ? "voted-up" : "voted-down");
+}
+
+const es = new EventSource("/events");
+es.onopen = () => render();
+es.onerror = () => { capturing = null; thinking = false; render(); };
+
+es.onmessage = (e) => {
+  const m = JSON.parse(e.data);
+
+  if (m.type === "capture") { capturing = m.capturing; screenOn = !!m.screen; render(); return; }
+
+  if (m.type === "mode") { talkBtn.style.display = m.mode === "ptt" ? "" : "none"; return; }
+  if (m.type === "talk") { holding = m.on; reflectTalk(); return; }  // e.g. server auto-released
+
+  if (m.type === "transcript") { addTx(m.ch, m.text, false, m.who); return; }
+  if (m.type === "partial-line") { addTx(m.ch, m.text, true, m.who); return; }
+  if (m.type === "topics") { setTopics(m.labels || []); return; }
+  if (m.type === "recall") { setRecall(m.sources || []); return; }
+  if (m.type === "screen") { setScreen(m.text || "", m.names || [], !!m.off, m.reason || "", m.speaker || ""); return; }
+  if (m.type === "now") { setNow(m); return; }
+
+  if (m.type === "heard") {          // audio just arrived: flick the dot
+    dot.classList.add("blip");
+    setTimeout(() => dot.classList.remove("blip"), 180);
+    return;
+  }
+
+  if (m.type === "thinking") { setState("thinking"); return; }
+
+  if (m.type === "partial") {
+    setState("thinking");
+    ensureLive().querySelector(".q").textContent = m.question;
+    return;
+  }
+
+  if (m.type === "guard") {
+    emptyEl?.remove(); emptyEl = null;
+    const g = document.createElement("div");
+    g.className = "guard";
+    g.innerHTML = `<b>⚠ internal-only territory</b> — ${escapeHtml(m.fact)}`;
+    feed.prepend(g);
+    return;
+  }
+
+  if (m.type === "digest") {
+    const d = document.createElement("div");
+    d.className = "digest";
+    d.textContent = m.markdown;
+    feed.appendChild(d);
+    setState("listening");
+    statusEl.textContent = "meeting ended";
+    return;
+  }
+
+  if (m.type === "silent") {
+    // No card this round: discard any speculative partial.
+    liveEl?.remove(); liveEl = null;
+    setState("listening");
+    return;
+  }
+
+  if (m.type === "card") {
+    const el = ensureLive();
+    el.classList.remove("live");
+    el.querySelector(".q").textContent = m.question;
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const via = m.via ? `<span class="via${m.via === "kw+vec" ? " kwvec" : ""}">${escapeHtml(m.via)}</span>` : "";
+    // Inline repo paths become links; if the src text carries none, the src
+    // label itself links to the card's anchor doc (recall record or prep pack).
+    const srcHtml = linkify(m.source);
+    const srcLabel = srcHtml.includes('class="doc"') || !m.link
+      ? "<b>src</b>" : `<a class="doc" data-p="${escapeHtml(m.link)}"><b>src</b></a>`;
+    // The original artifact outranks the index file: doc/sheet/email/slack link
+    // first-class on the src row, knowledge file as the dotted fallback.
+    const origin = m.origin?.url
+      ? `<a class="origin" data-u="${escapeHtml(m.origin.url)}">↗ ${escapeHtml(m.origin.label)}${m.origin.exact ? "" : " (search)"}</a>` : "";
+    meta.innerHTML = `<b>why</b> ${linkify(m.why)}<br>${srcLabel} ${srcHtml}${origin}${via}`;
+    el.appendChild(meta);
+
+    if (m.risk) {
+      const r = document.createElement("div");
+      r.className = "stakes risk";
+      r.innerHTML = `<span class="sig">⚠</span>${linkify(m.risk)}`;
+      el.appendChild(r);
+    }
+    if (m.win) {
+      const w = document.createElement("div");
+      w.className = "stakes win";
+      w.innerHTML = `<span class="sig">✦</span>${linkify(m.win)}`;
+      el.appendChild(w);
+    }
+    if ((m.followups || []).length) {
+      const f = document.createElement("div");
+      f.className = "fups";
+      f.innerHTML = `<span class="lbl">then</span>` + m.followups.map(q => `<div>${escapeHtml(q)}</div>`).join("");
+      el.appendChild(f);
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "actions";
+    const up = mkBtn("👍", () => vote(m.id, "up", up));
+    const down = mkBtn("👎", () => vote(m.id, "down", down));
+    const dismiss = mkBtn("dismiss", () => el.remove());
+    actions.append(up, down, dismiss);
+    if (m.firstTokenMs != null) {
+      const lat = document.createElement("span");
+      lat.className = "lat";
+      lat.textContent = `${(m.firstTokenMs / 1000).toFixed(1)}s`;
+      actions.appendChild(lat);
+    }
+    el.appendChild(actions);
+
+    liveEl = null;
+    cards++;
+    countEl.textContent = `${cards} card${cards === 1 ? "" : "s"}`;
+    setState("listening");
+  }
+};
+
+function mkBtn(label, fn) {
+  const b = document.createElement("button");
+  b.textContent = label;
+  b.onclick = fn;
+  return b;
+}
+const txEl = document.getElementById("tx");
+const topicsEl = document.getElementById("topics");
+let partialEl = null;
+const MAXTX = 40;
+
+function addTx(ch, text, live, who) {
+  if (live) {
+    if (!partialEl) { partialEl = document.createElement("div"); partialEl.className = "ln live"; txEl.appendChild(partialEl); }
+    partialEl.innerHTML = `<span class="who">…</span>${escapeHtml(text)}`;
+  } else {
+    partialEl?.remove(); partialEl = null;
+    const el = document.createElement("div");
+    el.className = "ln " + (ch === "me" ? "me" : "them");
+    el.innerHTML = `<span class="who">${escapeHtml(who || (ch === "me" ? "you" : "them"))}</span>${escapeHtml(text)}`;
+    txEl.appendChild(el);
+    while (txEl.children.length > MAXTX) txEl.firstChild.remove();
+  }
+  txEl.scrollTop = txEl.scrollHeight;
+}
+
+const recallEl = document.getElementById("recall");
+function setRecall(sources) {
+  if (!sources.length) { recallEl.classList.remove("on"); recallEl.innerHTML = ""; return; }
+  recallEl.classList.add("on");
+  recallEl.innerHTML = `<span class="lbl">checking</span>` + sources.map(s => `<b>${escapeHtml(s)}</b>`).join(" · ");
+}
+
+// The copilot's live read: current topic, who's speaking, goal bearing.
+const nowEl = document.getElementById("now");
+let nowSpeakers = [];   // transcript-confirmed speakers; SPEAKER-row fallback
+let nowState = {};      // partial topic updates merge in; full updates replace
+function setNow(m) {
+  if (m.partial) {
+    // The topic streams mid-response — update it early, keep the rest.
+    nowState = { ...nowState, topic: m.topic };
+  } else {
+    nowState = m;
+    // The model's slide summary rides on the now object: upgrade the raw OCR
+    // gist in the slides row whenever one arrives. Speakers feed the SPEAKER
+    // row when no tile label resolved (small overlay labels often escape OCR).
+    nowSpeakers = Array.isArray(m.speakers) ? m.speakers : [];
+    if (m.slides) { slideSummary = m.slides; gistAtSummary = scr.gist; }
+    renderScreen();
+  }
+  const s = nowState;
+  if (!s.topic) { nowEl.classList.remove("on"); nowEl.innerHTML = ""; return; }
+  nowEl.classList.add("on");
+  let goal = "";
+  if (s.goal) {
+    const cls = s.bearing === "advances" ? "g-adv" : s.bearing === "risks" ? "g-risk" : "g-neutral";
+    const glyph = s.bearing === "advances" ? "▲" : s.bearing === "risks" ? "▼" : "·";
+    goal = `<span class="goal"><span class="${cls}">${glyph} ${escapeHtml(s.bearing)}</span> ${escapeHtml(s.goal)}${s.note ? ` — ${escapeHtml(s.note)}` : ""}</span>`;
+  }
+  nowEl.innerHTML = `<span class="lbl">now</span><span class="topic">${escapeHtml(s.topic)}</span>${goal}`;
+}
+
+// What the meeting window's OCR currently reads: visible names + content gist.
+// off = screentap is running but found no meeting window — say so rather than
+// showing nothing (a stale strip and a missing feed must look different).
+// Content goes stale honestly: cleared if no update lands for 90s.
+const screenEl = document.getElementById("screen");
+let screenStaleTimer = null;
+// scr = raw feed state (gist straight off the OCR); slideSummary = the model's
+// 1-2 sentence read, which arrives a beat later and upgrades the display. The
+// summary PERSISTS until the next summary replaces it (or the presentation
+// ends): clearing it on every screen emission meant a playing video — which
+// re-emits every few seconds from OCR jitter — wiped the summary right back
+// to raw gist. Cost: the summary can run one slide behind for ~a check cycle;
+// the screen-kick check refreshes it.
+let scr = { off: false, reason: "", names: [], gist: "", speaker: "" };
+let slideSummary = "";
+let gistAtSummary = "";   // the gist the current summary describes
+// Word-overlap similarity: same slide re-OCR'd jitters a little (high overlap);
+// a genuinely new slide shares few words (low overlap).
+function gistSim(a, b) {
+  const ws = (s) => new Set(String(s).toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3));
+  const A = ws(a), B = ws(b);
+  if (!A.size && !B.size) return 1;
+  let i = 0; for (const w of A) if (B.has(w)) i++;
+  return i / (A.size + B.size - i || 1);
+}
+function renderScreen() {
+  if (scr.off) {
+    screenEl.classList.add("on");
+    screenEl.innerHTML = `<span class="none">${escapeHtml(scr.reason || "no presentation detected")}</span>`;
+    return;
+  }
+  // Only the model's SUMMARY is shown — raw OCR gist reads as noise. While a
+  // new slide's summary is still in flight, say so instead.
+  const hasContent = !!scr.gist;
+  const spkName = scr.speaker || nowSpeakers.join(", ");
+  if (!hasContent && !slideSummary && !spkName) { screenEl.classList.remove("on"); screenEl.innerHTML = ""; return; }
+  const spk = spkName
+    ? `<div class="vrow"><span class="sub">speaker</span><span class="names">${escapeHtml(spkName)}</span></div>` : "";
+  const slides = slideSummary
+    ? `<div class="vrow"><span class="sub">slides</span><span class="ocr">${escapeHtml(slideSummary)}</span></div>`
+    : hasContent
+      ? `<div class="vrow"><span class="sub">slides</span><span class="none">summarizing…</span></div>`
+      : "";
+  screenEl.classList.add("on");
+  screenEl.innerHTML = `${spk}${slides}`;
+  // Overflow gets a visible cue: bottom fade while more remains below,
+  // cleared when scrolled to the end.
+  const ocr = screenEl.querySelector(".ocr");
+  if (ocr) requestAnimationFrame(() => {
+    const update = () =>
+      ocr.classList.toggle("scrollable", ocr.scrollHeight - ocr.scrollTop - ocr.clientHeight > 6);
+    update();
+    ocr.onscroll = update;
+  });
+}
+function setScreen(text, names, off, offReason, speaker) {
+  clearTimeout(screenStaleTimer);
+  if (off) { slideSummary = ""; gistAtSummary = ""; }
+  // A materially different gist = a new slide: the old summary no longer
+  // describes what's on screen, so drop to "summarizing…" until the next
+  // check delivers. Same-slide OCR jitter (high overlap) keeps the summary.
+  else if (slideSummary && gistSim(text, gistAtSummary) < 0.4) { slideSummary = ""; gistAtSummary = ""; }
+  scr = { off, reason: offReason, names, gist: text, speaker: speaker || "" };
+  renderScreen();
+  if (!off) screenStaleTimer = setTimeout(() => { scr = { off: false, reason: "", names: [], gist: "", speaker: "" }; slideSummary = ""; renderScreen(); }, 90_000);
+}
+
+function setTopics(labels) {
+  topicsEl.querySelectorAll(".chip,#notopics").forEach(e => e.remove());
+  if (!labels.length) {
+    const n = document.createElement("span");
+    n.className = "none"; n.id = "notopics"; n.textContent = "nothing relevant to the conversation yet";
+    topicsEl.appendChild(n);
+    return;
+  }
+  for (const l of labels) {
+    const c = document.createElement("span");
+    c.className = "chip"; c.textContent = l;
+    topicsEl.appendChild(c);
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// Repo-relative .md paths in card text become clickable links that open the doc.
+// Escape first, then linkify: the path charset survives escaping untouched.
+const DOC_RE = /\b((?:people|projects|company|industry|self|synthesis|_shared)\/[A-Za-z0-9_\-./]+\.md(?::\d+)?)/g;
+function linkify(s) {
+  // No title attr: native tooltips over a nonactivating floating panel cause
+  // window-order/redraw weirdness. The dotted underline is the affordance.
+  return escapeHtml(s).replace(DOC_RE, (p) => `<a class="doc" data-p="${p}">${p}</a>`);
+}
+document.addEventListener("click", (e) => {
+  const a = e.target.closest("a.doc, a.origin");
+  if (!a) return;
+  e.preventDefault();
+  const body = a.dataset.u ? { u: a.dataset.u } : { p: a.dataset.p };
+  fetch("/open", { method: "POST", headers: { "content-type": "application/json" },
+                   body: JSON.stringify(body) }).catch(() => {});
+});
+</script>

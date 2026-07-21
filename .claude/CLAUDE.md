@@ -1,0 +1,49 @@
+# meeting-copilot
+
+Live meeting copilot: sits in a meeting, transcribes on-device (Swift), and a
+Node brain running `claude -p` surfaces ONE grounded question at a time on a
+floating panel. Extracted from a private repo for public release; not yet
+generic, not yet published.
+
+Read first: [README.md](../README.md) (operations), [HOW-IT-WORKS.md](../HOW-IT-WORKS.md)
+(mechanisms + design principles), [portable/README.md](../portable/README.md)
+(the knowledge layer). Current backlog and session context: [.claude/HANDOFF.md](HANDOFF.md).
+
+## Hard rules
+
+1. **Private remote only.** The scrub is done and the owner decided
+   (2026-07-21): the repo lives on a PRIVATE GitHub remote. Never make it
+   public or push its content anywhere else without the owner's explicit
+   say-so.
+2. **The regression gate.** Any change to `brain/` or a contract lands only
+   after `test/replay-gate.sh` passes (real model call, ~30-60s). Baseline:
+   1 card at 0:35 citing the $42,500 SOW anchor.
+3. **Grounded or silent.** Every card cites a held fact; a meeting can end
+   with zero cards; a generic "good question" is a bug. Cards name the
+   question, never the user's position.
+4. **Don't touch the TCC/signing design casually** (capture/, build-app.sh):
+   app-bundle launch + stable cert is hard-won; regressions cost silent
+   permission failures. See README "Signing & permissions".
+5. **Zero dependencies stays.** The brain is plain Node, the panel plain
+   HTML, capture plain Swift. No npm packages, no frameworks.
+6. **The knowledge dir is the contract.** Layout/tiers in
+   portable/KNOWLEDGE.md match recall.mjs's path regexes; changing either
+   side means changing both.
+
+## Layout
+
+```
+capture/   Swift: meetingtap (audio->transcript), screentap (window OCR), TCC bundles
+brain/     Node: live.mjs (server), contracts, matcher, recall, ambient, origins
+panel/     floating NSPanel + index.html (the whole UI)
+portable/  knowledge layer: format spec, intake wizard, import/sync/pack prompts
+test/      replay-gate.sh + fixtures (the one place .jsonl is committed)
+```
+
+## Runtime facts
+
+- Knowledge root: `--knowledge` flag > `KNOWLEDGE_DIR` in
+  `~/.meeting-copilot/config` > `~/.meeting-copilot/knowledge`.
+- Session data: `~/.meeting-copilot/sessions/`, never the repo.
+- Headless `claude -p` cannot reliably reach MCP tools — anything needing
+  integrations runs in an interactive session (see portable/README.md).

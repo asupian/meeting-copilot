@@ -1,0 +1,16 @@
+# Build artifacts (regenerate from source)
+capture/meetingtap
+capture/meetingtap.app/
+capture/screentap
+capture/screentap.app/
+panel/CardPanel
+*.o
+
+# Ephemeral working data — transcripts and cards are never committed
+# (real meeting content + generated prep packs live in ~/.meeting-copilot/, not
+# the repo). Generated packs never land in the repo tree, so no rule needed here.
+*.jsonl
+
+
+# Test fixtures are the one committed .jsonl: the regression gate depends on them
+!test/fixtures/**/*.jsonl
