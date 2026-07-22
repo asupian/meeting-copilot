@@ -7,7 +7,7 @@ generic, not yet published.
 
 Read first: [README.md](../README.md) (operations), [HOW-IT-WORKS.md](../HOW-IT-WORKS.md)
 (mechanisms + design principles), [portable/README.md](../portable/README.md)
-(the knowledge layer). Current backlog and session context: [.claude/HANDOFF.md](HANDOFF.md).
+(the knowledge layer).
 
 ## Hard rules
 
@@ -78,3 +78,10 @@ test/      replay-gate.sh + fixtures (the one place .jsonl is committed)
   verify via the claude shim.
 - Headless `claude -p` cannot reliably reach MCP tools — anything needing
   integrations runs in an interactive session (see portable/README.md).
+- `.gitignore` ignores `*.jsonl` EXCEPT `test/fixtures/**` — the replay gate
+  depends on that exception.
+- Never replay fixtures by appending them to live.mjs's transcript: the
+  elapsed clock anchors to the fixture's old timestamps and the model judges
+  a 32-hour meeting. brain-loop.mjs / review-server.mjs are the replay paths;
+  for deterministic live.mjs tests, shim `claude` on PATH (capture stdin =
+  user prompt, emit canned stream_event lines).
