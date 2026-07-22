@@ -38,6 +38,16 @@ If none exist, say so and stop.
 - **Unattributed commitments** → evidence of nothing. Leave them where they
   are.
 
+# Recurrence — count before you file
+
+Merging is where chronic items become visible: you see the meeting notes side
+by side. When the same open topic, blocker, or question appears unresolved
+across >=3 dated meeting notes or evidence lines, maintain ONE `[recurring]`
+line at its home file (the initiative it belongs to, else the evidence file):
+`[recurring] <topic>: unresolved across <n> meetings since <first date> (last: <last date>)`.
+Update it in place on later runs (like a `[trend]` line — the maintained-line
+exception to append-only); remove it when a source shows the item resolved.
+
 # Hard rules
 
 - Preserve sensitivity tokens (`[SENSITIVE]`, `[INTERNAL]`) — first on the

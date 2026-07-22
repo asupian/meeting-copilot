@@ -87,6 +87,12 @@ Field order is deliberate: `question` first so it streams to the panel at
 first token; `now`/`summary` last. The NOW topic is also extracted from the
 stream mid-flight rather than waiting for the full JSON.
 
+Every card carries a `type` — its detection class (`collision` / `gap` /
+`reinforce`, the panel's colored chip). The classes, their modes, and the
+priority ladder (collision > gap > reinforce, one card per check) are defined
+in the contract; live.mjs whitelists the label and drops anything else rather
+than guessing.
+
 ## Recall: the whole repo, without the noise
 
 The prep pack is a precomputed retrieval; recall is the live one. Two channels

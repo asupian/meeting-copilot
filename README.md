@@ -152,7 +152,7 @@ Live, on the panel:
 | Section | What it is |
 |---|---|
 | **NOW** | current topic + whether it advances/risks a stated goal (▲/▼ + grounded note) |
-| **SUGGESTIONS** | the cards: question + why + src (clickable — the original Sheet/email/Slack when resolvable via `origins.mjs`, the knowledge file as fallback) + ⚠ risk / ✦ win stakes + follow-up questions. A badge shows how the anchor was found (`pack` / `kw` / `vec` / `kw+vec`). |
+| **SUGGESTIONS** | the cards: question + why + src (clickable — the original Sheet/email/Slack when resolvable via `origins.mjs`, the knowledge file as fallback) + ⚠ risk / ✦ win stakes + follow-up questions. Two chips: the detection class (red `collision` / amber `gap` / green `reinforce`) and how the anchor was found (`pack` / `kw` / `vec` / `kw+vec`). |
 | **TOPICS** | held facts the conversation AND slides are touching (code matcher, ~1ms) |
 | **SPEAKER** | active speaker — largest standalone tile label, falling back to transcript-confirmed speakers |
 | **SLIDES** | the model's 1–2 sentence read of the current slide ("summarizing…" while in flight; includes chart shapes from the vision pass) |
@@ -172,11 +172,26 @@ copilot chattier. Negative votes also carry across meetings: the last 30 days
 of downvoted questions seed the next meeting's bar from the first check
 (see HOW-IT-WORKS "The feedback loop").
 
-Card grounding is the one unbending rule: every card cites a specific fact —
+## What it detects
+
+Three card classes, each shown as a colored chip on the card:
+
+| Chip | Class | Fires when |
+|---|---|---|
+| red | **collision** | the room disagrees with the record: a stated number/status/date/owner against a held fact, a held `[trend]` read the wrong way ("activation's fine" vs three straight declines), a settled decision being reopened, a proposed date against a held deadline |
+| amber | **gap** | something needed is missing and its window closes with the meeting: a decision forming without the held data, a prep goal untouched late, a question raised earlier and dropped, an unraised blocker, a commitment forming toward someone with open overdue items on file, a `[recurring]` topic treated as fresh |
+| green | **reinforce** | nothing is wrong: a held fact worth putting on the table, a glossed win worth naming ("104% against a 95% target — worth calling out the team?") |
+
+One card per check. When several compete in one beat, the ladder decides:
+collision > gap > reinforce — ranked by decay (a collision is the catch of
+record; a gap dies with the meeting; a reinforcement can land a beat later).
+The ladder ranks simultaneous cards, it is not a bar: a lone reinforce fires.
+
+Card grounding stays the one unbending rule: every card cites a specific fact —
 the prep pack or a `[truth]`-tier record (goals, financials, evidence,
-initiative logs). Triggers: contradiction, unraised open thread, decision
-forming without data, unhit prep goal late, relevant fact in view — including
-WINS the room is glossing past ("largest quarter on record — worth naming?").
+initiative logs). Alongside the cards run the continuous monitors: goal bearing
+(▲/▼ on the NOW strip), the disclosure guard, TOPICS fact-matching, and the
+ambient commitment/question listener that becomes the digest.
 
 ## Mic modes
 

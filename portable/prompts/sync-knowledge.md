@@ -67,7 +67,7 @@ DOCS/DRIVE:
 - Never delete or reword lines you didn't write this run. {{USER_NAME}}'s
   hand-written lines are senior to yours.
 
-# Trends — compare before you file
+# Trends and recurrences — compare before you file
 
 Detection of slow drifts lives HERE, at sync time, not in the live meeting:
 
@@ -86,6 +86,11 @@ Detection of slow drifts lives HERE, at sync time, not in the live meeting:
 - Sustained declines and misses against a `goals.md` target are exactly what
   the live copilot needs to collide with an optimistic room — never soften
   the wording.
+- Same mechanism for RECURRENCES: when the same topic, blocker, or open
+  question shows up unresolved across >=3 dated meeting notes or evidence
+  lines, maintain ONE `[recurring]` line at its home file, e.g.
+  `[recurring] EU data residency: unresolved across 4 meetings since 2026-05-12 (last: 2026-07-20)`.
+  Update it in place like a `[trend]` line; remove it when the item resolves.
 
 # Hard rules
 

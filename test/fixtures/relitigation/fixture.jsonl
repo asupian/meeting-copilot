@@ -1,0 +1,5 @@
+{"t":"2026-07-21T11:00:00Z","ch":"them","text":"Before we get to alerting, I want to reopen the queue question."}
+{"t":"2026-07-21T11:00:12Z","ch":"them","text":"With the new team joining I think we should look at moving off Kafka to Pulsar this quarter."}
+{"t":"2026-07-21T11:00:26Z","ch":"them","text":"We could spike a migration plan next sprint if people agree."}
+{"t":"2026-07-21T11:00:40Z","ch":"me","text":"What's driving the revisit?"}
+{"t":"2026-07-21T11:00:51Z","ch":"them","text":"Mostly that the new folks have Pulsar experience, honestly."}

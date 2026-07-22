@@ -61,6 +61,11 @@ profiles and notes — recall will still surface them, softly.
   metric has >=2 dated points (the one exception to append-only) — this is how
   a slow drift becomes a fact the live copilot can collide with an optimistic
   room.
+- **Recurrences are one maintained line, token first**: `[recurring] EU data
+  residency: unresolved across 4 meetings since 2026-05-12 (last: 2026-07-20)`.
+  Maintained by sync/merge when the same item stays unresolved across >=3
+  dated notes; removed when it resolves. This is how a chronic topic becomes
+  a fact the copilot can raise when the room treats it as fresh.
 - **Sensitivity is a literal token, first on the line**:
   - `[SENSITIVE]` / `[CONFIDENTIAL]` — never surfaced when outsiders are in the
     meeting; never carried into a prep pack as plain prose.

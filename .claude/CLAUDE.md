@@ -63,8 +63,18 @@ test/      replay-gate.sh + fixtures (the one place .jsonl is committed)
   review-server replays and fixture-making need `--keep-session`.
 - Config keys added 2026-07-22: `PREP_LOOKAHEAD_H`, `KNOWLEDGE_SYNCED_AT`
   (stamped by sync; prep/live warn past 7 days), `KNOWLEDGE_MERGED_AT`.
-- `test/trigger-checks.sh` = rubric-tier fixtures (win-gloss, goal-drift,
-  trend-gloss) for the triggers the binary gate doesn't cover; run it for
-  substantive contract changes.
+- Detection taxonomy: cards carry `type` ∈ {collision, gap, reinforce}
+  (lib.mjs CARD_TYPES; contract defines classes+modes+ladder collision > gap
+  > reinforce). live.mjs whitelists — invalid/missing type = no label, never
+  guessed; SSE carries it as `cardType` (`type` is the SSE event kind); panel
+  shows the .dtype chip (red/amber/green).
+- `test/trigger-checks.sh` = rubric-tier fixtures, one per detection mode the
+  binary gate doesn't cover (win-gloss, goal-drift, trend-gloss, relitigation,
+  load, recurrence), asserting anchor AND class; run for substantive contract
+  changes. Fixtures must ISOLATE their mode — a second live card in the same
+  beat gets out-laddered (that's how win-gloss failed once).
+- `dropped` mode (unanswered question resurfaced) is live.mjs-only (ambient
+  state -> QUESTIONS STILL OPEN block); not covered by brain-loop fixtures —
+  verify via the claude shim.
 - Headless `claude -p` cannot reliably reach MCP tools — anything needing
   integrations runs in an interactive session (see portable/README.md).
