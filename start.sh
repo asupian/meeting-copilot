@@ -38,7 +38,7 @@ fi
 
 if [ ! -s "$PREP" ]; then
   echo "start: no prep pack at $PREP" >&2
-  echo "  build one first:  ./brain/build-prep-pack.sh --next   (or --person \"Name\")" >&2
+  echo "  build one first:  ./portable/knowledge.sh pack --next" >&2
   echo "  or point at one:  ./start.sh --prep <file>" >&2
   exit 1
 fi
