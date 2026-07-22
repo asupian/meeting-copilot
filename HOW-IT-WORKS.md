@@ -182,7 +182,14 @@ built so they can only make the copilot QUIETER:
 
 With zero votes both are exact no-ops — the prompt is byte-identical and the
 gap stays at `--min-gap` — which is what keeps the replay gate (no feedback
-events) meaningful. Feedback is per-session; nothing persists across meetings.
+events) meaningful.
+
+Negative votes also persist: at meeting end the session's votes append to
+`~/.meeting-copilot/feedback-history.jsonl` (capped at 200 lines), and the
+next meeting seeds its FEEDBACK block with the last 30 days of downvoted
+questions (max 10) from the very first check. History touches the prompt bar
+only — never the mechanical gap — so a string of bad meetings makes the
+copilot choosier, not mute. Delete the file to reset the bar.
 
 ## Latency budget
 

@@ -23,7 +23,7 @@
 
 import { createServer } from "node:http";
 import { execFile } from "node:child_process";
-import { readFileSync, readdirSync, existsSync, watch, appendFileSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, watch, appendFileSync, statSync, writeFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -62,6 +62,14 @@ const MODEL = val("--model", null);
 // its cross-referencing explicitly (see experimental/contract-fast.md).
 const THINK = argv.includes("--think") ? Number(val("--think", 0)) : null;
 const FEEDBACK = join(CURRENT, "feedback.jsonl");
+// Cross-meeting feedback memory: a compact vote log surviving sessions.
+// Consumed as a prompt seed only — never the mechanical gap — so a string of
+// bad meetings can't mute a good one.
+const FEEDBACK_HISTORY = join(homedir(), ".meeting-copilot", "feedback-history.jsonl");
+// No transcription retention by default: the transcript/screen feeds are
+// working files, deleted after the digest (the user records meetings through
+// other means). --keep-session keeps them, for review-server or fixture-making.
+const KEEP_SESSION = has("--keep-session");
 // Ambient listener + disclosure guard. Ambient is on by default: it is silent
 // during the meeting and only materializes as the end-of-meeting digest and
 // _staging raw-signal files. --no-staging keeps the digest but skips the repo.
@@ -263,20 +271,36 @@ function feedbackGap() {
   return net >= 4 ? 180 : net >= 2 ? 90 : 0;
 }
 
+// Negative votes from PAST meetings (30-day window, last 10): they seed the
+// prompt's bar from check one, but never touch the mechanical gap — history
+// makes the copilot choosier, not mute. Missing/empty file -> [] -> no-op.
+const pastNegatives = (() => {
+  try {
+    const cutoff = Date.now() - 30 * 86_400_000;
+    return readFileSync(FEEDBACK_HISTORY, "utf8").split("\n").filter(Boolean)
+      .map((l) => { try { return JSON.parse(l); } catch { return null; } })
+      .filter((e) => e && (e.vote === "down" || e.vote === "dismiss") && e.question && Date.parse(e.at) > cutoff)
+      .slice(-10);
+  } catch { return []; }
+})();
+
 function feedbackBlock() {
   // Conditional block, not a contract line: same reasoning as asrCaveat — a
   // rule that only appears when relevant stays salient. Quotes only questions
   // the model itself wrote (newline-stripped, capped), so no user free text
   // reaches the prompt.
-  if (!votes.size) return "";
-  const q = (id) => String(cardById.get(id) || "").replace(/\s+/g, " ").slice(0, 120);
+  if (!votes.size && !pastNegatives.length) return "";
+  const clip = (s) => String(s).replace(/\s+/g, " ").slice(0, 120);
+  const q = (id) => clip(cardById.get(id) || "");
   const listOf = (v) => [...votes].filter(([, x]) => x.vote === v).map(([id]) => `- "${q(id)}"`);
   const down = listOf("down").slice(-5), dis = listOf("dismiss").slice(-5), up = listOf("up").slice(-3);
+  const past = pastNegatives.map((e) => `- "${clip(e.question)}"`);
   return [
-    `FEEDBACK ON EARLIER CARDS (${USER_NAME}'s votes on the cards above, this meeting):`,
+    `FEEDBACK ON EARLIER CARDS (${USER_NAME}'s votes on cards from this and past meetings):`,
     ...(down.length ? [`Downvoted — not worth the interruption:`, ...down] : []),
     ...(dis.length ? [`Dismissed (weak negative):`, ...dis] : []),
     ...(up.length ? [`Upvoted — the bar was right here:`, ...up] : []),
+    ...(past.length ? [`Downvoted or dismissed in PAST meetings (recent):`, ...past] : []),
     `Read this as one-directional calibration of your bar: a new candidate that`,
     `resembles a downvoted or dismissed card (same fact, same angle, same kind of`,
     `trigger) must clear a HIGHER bar — surface it only if clearly stronger (a`,
@@ -828,6 +852,12 @@ server.listen(PORT, "127.0.0.1", () => {
   console.error(`live: debounce ${DEBOUNCE_MS}ms, max-wait ${MAX_WAIT_MS / 1000}s, cap ${CAP}/30min${AMBIENT_ON ? ", ambient on" : ""}`);
   console.error(`live: mic mode ${MODE}${MODE === "ptt" ? " -- hold the panel's \"talk\" button while you speak (mic is otherwise dropped as speaker echo)" : ""}`);
   console.error(`live: recall ${RECALL_ON ? `on -- ${QMD_BIN} whole-repo, off critical path` : "off"}`);
+  // Stale knowledge looks exactly like fresh knowledge on a card — say it here.
+  if (CONFIG.KNOWLEDGE_SYNCED_AT) {
+    const days = Math.floor((Date.now() - Date.parse(CONFIG.KNOWLEDGE_SYNCED_AT)) / 86_400_000);
+    if (days > 7) console.error(`live: WARNING — knowledge last synced ${days} days ago; cards cite what's on file (refresh: copilot prep <n> --refresh)`);
+  }
+  if (pastNegatives.length) console.error(`live: feedback history seeded (${pastNegatives.length} past negative(s) raise the bar)`);
 });
 
 // Ambient extraction runs on its own clock; flush() itself decides if enough
@@ -872,6 +902,32 @@ async function shutdown() {
       }
       for (const f of files) console.error(`live: staging -> ${f}`);
       await new Promise((r) => setTimeout(r, 400));   // let the SSE digest land
+    }
+    // Persist this session's votes so the next meeting starts with the bar
+    // already calibrated (consumed via pastNegatives at startup). Capped so
+    // the file can't grow into a shadow archive.
+    try {
+      if (votes.size) {
+        const at = new Date().toISOString();
+        const lines = [...votes].map(([id, v]) =>
+          JSON.stringify({ at, title: MEETING_TITLE, vote: v.vote, question: cardById.get(id) || "" }));
+        appendFileSync(FEEDBACK_HISTORY, lines.join("\n") + "\n");
+        const all = readFileSync(FEEDBACK_HISTORY, "utf8").split("\n").filter(Boolean);
+        if (all.length > 200) writeFileSync(FEEDBACK_HISTORY, all.slice(-200).join("\n") + "\n");
+        console.error(`live: feedback history +${lines.length} -> ${FEEDBACK_HISTORY}`);
+      }
+    } catch {}
+    // No transcription retention: the digest is the meeting's record; the
+    // transcript and screen feeds were working files. Delete ONLY the session
+    // defaults — an explicitly passed --transcript/--screen-file path is a
+    // fixture or replay input, never ours to delete.
+    if (!KEEP_SESSION) {
+      let removed = 0;
+      for (const [p, name] of [[TRANSCRIPT, "transcript.jsonl"], [SCREEN_FILE, "screen.jsonl"]]) {
+        if (p === join(CURRENT, name)) { try { unlinkSync(p); removed++; } catch {} }
+      }
+      try { unlinkSync(join(CURRENT, "frame.png")); removed++; } catch {}
+      if (removed) console.error("live: transcript/screen feed deleted — no transcription retained (--keep-session to keep, e.g. for review-server or fixture-making)");
     }
   } finally { process.exit(0); }
 }
