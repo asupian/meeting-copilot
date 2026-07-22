@@ -33,9 +33,15 @@ runs:
 ```bash
 ./knowledge.sh setup                   # guided: interview -> priors -> import/sync offers
 ./knowledge.sh sync                    # weekly: last 7 days from integrations
-./knowledge.sh pack --next             # before a meeting
-../start.sh --prep ~/.meeting-copilot/prep-pack.md
+../copilot prep list                   # upcoming meetings, numbered
+../copilot prep 2                      # pack for meeting 2 -> ~/.meeting-copilot/prep/<date>-<slug>.md
+../copilot live                        # picks the pack whose start time brackets now
 ```
+
+`copilot prep <n>` pipes the chosen calendar event through `knowledge.sh pack
+--paste` and stores the pack per meeting; every build also refreshes the
+legacy single `~/.meeting-copilot/prep-pack.md`, so the pre-copilot flow
+(`./knowledge.sh pack --next` then `../start.sh`) works unchanged.
 
 (`init` / `import` remain for users who'd rather skip the wizard and write or
 seed the dir directly.)

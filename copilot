@@ -1,0 +1,52 @@
+#!/bin/bash
+# copilot — the meeting copilot in three journeys:
+#
+#   copilot onboard [knowledge | import <dir> | demo]   install; build knowledge; try a replay
+#   copilot prep [list | <n> | --pick | show [name]]    pick a meeting, build + view prep packs
+#   copilot live [name] [flags]                         run the copilot for a meeting
+#   copilot config [list | get KEY | set KEY VALUE]     defaults in ~/.meeting-copilot/config
+#
+# A pure router: each journey lives in its own directory (onboarding/, prep/,
+# live/) as a thin script over the engines (setup.sh, portable/, start.sh —
+# all still usable directly). config is the router's own utility.
+set -euo pipefail
+DIR="$(cd "$(dirname "$0")" && pwd)"
+CONF="${HOME}/.meeting-copilot/config"
+
+usage() { sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+
+config_cmd() {
+  case "${1:-list}" in
+    list)
+      [ -f "$CONF" ] && cat "$CONF" ||
+        { echo "no config yet — run: copilot onboard knowledge  (or ./portable/knowledge.sh init)" >&2; exit 1; }
+      ;;
+    get)
+      grep -m1 "^${2:?usage: copilot config get KEY}=" "$CONF" | sed -e 's/^[^=]*=//' -e 's/^"//' -e 's/"$//'
+      ;;
+    set)
+      local key="${2:?usage: copilot config set KEY VALUE}" val="${3?usage: copilot config set KEY VALUE}"
+      # One-line KEY="VALUE" only: the file is read by bash `source` AND
+      # brain/lib.mjs loadConfig — quotes or newlines in VALUE break both.
+      [[ "$key" =~ ^[A-Z_]+$ ]] || { echo "config: KEY must be UPPER_SNAKE_CASE" >&2; exit 1; }
+      case "$val" in *'"'*|*$'\n'*) echo "config: VALUE may not contain double quotes or newlines" >&2; exit 1 ;; esac
+      mkdir -p "$(dirname "$CONF")"; touch "$CONF"
+      local tmp="${CONF}.tmp.$$"
+      awk -v k="$key" -v v="$val" '
+        $0 ~ "^" k "=" { print k "=\"" v "\""; done = 1; next }
+        { print }
+        END { if (!done) print k "=\"" v "\"" }
+      ' "$CONF" > "$tmp" && mv "$tmp" "$CONF"
+      echo "config: $key set" >&2
+      ;;
+    *) usage ;;
+  esac
+}
+
+case "${1:-help}" in
+  onboard) shift; exec "$DIR/onboarding/onboard.sh" "$@" ;;
+  prep)    shift; exec "$DIR/prep/prep.sh" "$@" ;;
+  live)    shift; exec "$DIR/live/live.sh" "$@" ;;
+  config)  shift; config_cmd "$@" ;;
+  *)       usage ;;
+esac

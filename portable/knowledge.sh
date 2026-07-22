@@ -6,6 +6,7 @@
 #   knowledge.sh import <source-dir>       distill an existing notes folder (headless)
 #   knowledge.sh sync [days]               extract from integrations (interactive claude)
 #   knowledge.sh pack [--next | --person "<name>" | --paste] [--out <file>]
+#   knowledge.sh events [hours]            upcoming calendar events JSON (needs the gws CLI)
 #
 # Execution modes, and why:
 #   - import + pack(--person/--paste) run `claude -p` HEADLESS with file tools
@@ -21,7 +22,7 @@ set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 CONF="${HOME}/.meeting-copilot/config"
 
-usage() { sed -n '3,9p' "$0"; exit 1; }
+usage() { sed -n '3,10p' "$0"; exit 1; }
 [ $# -ge 1 ] || usage
 CMD="$1"; shift
 
@@ -44,6 +45,19 @@ register_recall() { # register_recall <dir>
     echo "recall: could not register ${dir} with qmd (name 'knowledge' taken?)." >&2
     echo "recall: register manually: (cd ${dir} && qmd collection add . --name <name> && qmd embed)" >&2
   fi
+}
+
+# Calendar fetch via the local gws CLI — headless-safe (no MCP involved).
+# Prints the primary calendar's events JSON for the coming <hours>; fails
+# (nonzero, no output) when gws is absent, unauthed, or holds no events.
+gws_events() { # gws_events <hours>
+  command -v gws >/dev/null 2>&1 || return 1
+  local now later events
+  now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  later="$(date -u -v+"$1"H +%Y-%m-%dT%H:%M:%SZ)"
+  events="$(gws calendar events list --params "{\"calendarId\":\"primary\",\"timeMin\":\"$now\",\"timeMax\":\"$later\",\"singleEvents\":true,\"orderBy\":\"startTime\",\"maxResults\":10,\"fields\":\"items(summary,start,end,attendees(email,displayName,responseStatus,self),eventType,organizer(email))\"}" --format json 2>/dev/null)" || return 1
+  printf '%s' "$events" | grep -q '"summary"' || return 1
+  printf '%s' "$events"
 }
 
 if [ "$CMD" = "setup" ]; then
@@ -135,7 +149,7 @@ case "$CMD" in
       case "$1" in
         --next)   TARGET="next"; MODE="interactive"; shift ;;
         --person) TARGET="person: $2"; MODE="headless"; shift 2 ;;
-        --paste)  echo "paste the meeting details (title, time, attendees+emails), then Ctrl-D:" >&2
+        --paste)  [ -t 0 ] && echo "paste the meeting details (title, time, attendees+emails), then Ctrl-D:" >&2
                   TARGET="this pasted meeting description (do NOT call any calendar tool):
 $(cat)"; MODE="headless"; shift ;;
         --out)    OUT="$2"; shift 2 ;;
@@ -147,12 +161,10 @@ $(cat)"; MODE="headless"; shift ;;
     # here and run headless. (Headless claude -p cannot reliably reach MCP
     # calendar tools — the reason --next otherwise needs an interactive
     # session — but a local CLI needs no MCP.)
+    LOOKAHEAD="${PREP_LOOKAHEAD_H:-12}"
     if [ "$TARGET" = "next" ] && command -v gws >/dev/null 2>&1; then
-      NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-      LATER="$(date -u -v+12H +%Y-%m-%dT%H:%M:%SZ)"
-      EVENTS="$(gws calendar events list --params "{\"calendarId\":\"primary\",\"timeMin\":\"$NOW\",\"timeMax\":\"$LATER\",\"singleEvents\":true,\"orderBy\":\"startTime\",\"maxResults\":10,\"fields\":\"items(summary,start,end,attendees(email,displayName,responseStatus,self),eventType,organizer(email))\"}" --format json 2>/dev/null)" || EVENTS=""
-      if printf '%s' "$EVENTS" | grep -q '"summary"'; then
-        TARGET="next — the coming 12h of calendar events are embedded below (already fetched; do NOT call any calendar tool). Pick per the \"next\" rule:
+      if EVENTS="$(gws_events "$LOOKAHEAD")"; then
+        TARGET="next — the coming ${LOOKAHEAD}h of calendar events are embedded below (already fetched; do NOT call any calendar tool). Pick per the \"next\" rule:
 $EVENTS"
         MODE="headless"
         echo "pack: calendar fetched via the gws CLI — running headless." >&2
@@ -172,6 +184,14 @@ $EVENTS"
     grep -q "(triggers:" "$OUT" ||
       echo "pack: WARNING — no (triggers: ...) annotations; live matcher recall will suffer" >&2
     echo "pack: wrote ${OUT} ($(wc -w < "$OUT") words, $(grep -c '(triggers:' "$OUT" || true) facts with triggers)" >&2
+    ;;
+  events)
+    HOURS="${1:-${PREP_LOOKAHEAD_H:-12}}"
+    gws_events "$HOURS" || {
+      echo "events: no calendar data — the gws CLI is missing, unauthed, or holds no events in the next ${HOURS}h." >&2
+      echo "events: interactive fallback: knowledge.sh pack --next" >&2
+      exit 1
+    }
     ;;
   *) usage ;;
 esac
