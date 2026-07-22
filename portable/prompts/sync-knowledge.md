@@ -67,6 +67,26 @@ DOCS/DRIVE:
 - Never delete or reword lines you didn't write this run. {{USER_NAME}}'s
   hand-written lines are senior to yours.
 
+# Trends — compare before you file
+
+Detection of slow drifts lives HERE, at sync time, not in the live meeting:
+
+- When an extracted number has an older counterpart already in the records
+  (same metric in `financials.md`, `goals.md`, an `evidence.md` or an
+  initiative file), don't just append the new point — also write ONE dated
+  `[trend]` line at the metric's home file naming the direction across the
+  known points, e.g.
+  `[trend] NA churn: 3rd consecutive monthly rise — 2.1% (May) -> 2.4% (Jun) -> 2.8% (Jul) (src: doc:"Churn dashboard")`.
+- Update the existing `[trend]` line for that metric in place (these are
+  yours to maintain — the one exception to append-only), keeping the full
+  point series as long as it stays one line.
+- Only for metrics with >=2 dated points from written artifacts. Two points
+  make a direction, not a pattern — say "2 points" in the line; call it
+  "consecutive"/"sustained" only at >=3.
+- Sustained declines and misses against a `goals.md` target are exactly what
+  the live copilot needs to collide with an optimistic room — never soften
+  the wording.
+
 # Hard rules
 
 - Verbatim numbers, named sources, dates on every line. Nothing invented; a

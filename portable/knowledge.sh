@@ -6,6 +6,7 @@
 #   knowledge.sh import <source-dir>       distill an existing notes folder (headless)
 #   knowledge.sh sync [days]               extract from integrations (interactive claude)
 #   knowledge.sh pack [--next | --person "<name>" | --paste] [--out <file>]
+#   knowledge.sh merge                     consolidate meeting raw signals into truth records (headless)
 #   knowledge.sh events [hours]            upcoming calendar events JSON (needs the gws CLI)
 #
 # Execution modes, and why:
@@ -22,7 +23,17 @@ set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 CONF="${HOME}/.meeting-copilot/config"
 
-usage() { sed -n '3,10p' "$0"; exit 1; }
+usage() { sed -n '3,11p' "$0"; exit 1; }
+
+set_conf() { # set_conf KEY VALUE — replace-or-append a KEY="VALUE" line in the config
+  local tmp="${CONF}.tmp.$$"
+  touch "$CONF"
+  awk -v k="$1" -v v="$2" '
+    $0 ~ "^" k "=" { print k "=\"" v "\""; done = 1; next }
+    { print }
+    END { if (!done) print k "=\"" v "\"" }
+  ' "$CONF" > "$tmp" && mv "$tmp" "$CONF"
+}
 [ $# -ge 1 ] || usage
 CMD="$1"; shift
 
@@ -141,6 +152,17 @@ case "$CMD" in
     echo "sync: opening an interactive claude session (integrations need per-tool approval)." >&2
     echo "sync: it will extract from the last ${DAYS} days into ${KNOWLEDGE_DIR}." >&2
     claude "$(fill "$DIR/prompts/sync-knowledge.md" "LOOKBACK_DAYS=$DAYS")"
+    # Stamp freshness so prep/live can say how old the knowledge is. The
+    # session already ended, so this marks "last attempted+finished sync".
+    set_conf KNOWLEDGE_SYNCED_AT "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    ;;
+  merge)
+    # Consolidate raw meeting signals (meetings/ digests, _staging inboxes)
+    # into truth-tier records — the step that turns meeting N's output into
+    # meeting N+1's held facts. File tools only, so it runs headless.
+    echo "merge: consolidating raw meeting signals into ${KNOWLEDGE_DIR} truth records" >&2
+    headless "$(fill "$DIR/prompts/merge-signals.md")"
+    set_conf KNOWLEDGE_MERGED_AT "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     ;;
   pack)
     OUT="${HOME}/.meeting-copilot/prep-pack.md"

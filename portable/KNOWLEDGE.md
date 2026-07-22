@@ -55,6 +55,12 @@ profiles and notes — recall will still surface them, softly.
   card link back to the original email/doc instead of your notes file.
 - **Open items as checkboxes**: `- [ ] Dana to send revised SOW (due 2026-07-18)`.
   The prep-pack builder harvests unchecked items as "open threads".
+- **Trends are one maintained line, token first**: `[trend] NA churn: 3rd
+  consecutive monthly rise — 2.1% (May) -> 2.4% (Jun) -> 2.8% (Jul)
+  (src: doc:"Churn dashboard")`. Written and updated in place by sync when a
+  metric has >=2 dated points (the one exception to append-only) — this is how
+  a slow drift becomes a fact the live copilot can collide with an optimistic
+  room.
 - **Sensitivity is a literal token, first on the line**:
   - `[SENSITIVE]` / `[CONFIDENTIAL]` — never surfaced when outsiders are in the
     meeting; never carried into a prep pack as plain prose.

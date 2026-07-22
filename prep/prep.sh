@@ -1,10 +1,11 @@
 #!/bin/bash
 # prep.sh — the Meeting-prep journey: pick a meeting, build + view prep packs.
 #
-#   prep.sh [list]         upcoming meetings, numbered (needs the gws CLI)
-#   prep.sh <n>            build the pack for meeting n -> ~/.meeting-copilot/prep/
-#   prep.sh --pick         no-gws fallback: interactive pack --next, then archive
-#   prep.sh show [name]    view the newest pack, or one matched by name
+#   prep.sh [list]              upcoming meetings, numbered (needs the gws CLI)
+#   prep.sh <n> [--refresh]     build the pack for meeting n (-> ~/.meeting-copilot/prep/);
+#                               --refresh syncs the last day from integrations first
+#   prep.sh --pick              no-gws fallback: interactive pack --next, then archive
+#   prep.sh show [name]         view the newest pack, or one matched by name
 #
 # Thin by design: the engines are portable/knowledge.sh (events + pack) and
 # cli/events.mjs (list, stems, JSON). Packs are stored per meeting as
@@ -21,9 +22,43 @@ fetch_events() { # events JSON for the lookahead window, or exit with the fallba
   }
 }
 
+freshness_note() {
+  # A card grounded in stale knowledge looks confident anyway — say the age
+  # out loud at prep time, when there is still time to refresh.
+  if [ -z "${KNOWLEDGE_SYNCED_AT:-}" ]; then
+    echo "prep: knowledge freshness UNKNOWN — never synced. Refresh: copilot prep <n> --refresh (or knowledge.sh sync)" >&2
+    return
+  fi
+  local then now days
+  then="$(date -ju -f "%Y-%m-%dT%H:%M:%SZ" "$KNOWLEDGE_SYNCED_AT" +%s 2>/dev/null || true)"
+  [ -n "$then" ] || return 0
+  now="$(date -u +%s)"
+  days=$(( (now - then) / 86400 ))
+  if [ "$days" -gt 7 ]; then
+    echo "prep: WARNING — knowledge last synced ${days} days ago; cards will cite ${days}-day-old facts. Refresh: copilot prep <n> --refresh" >&2
+  else
+    echo "prep: knowledge last synced ${days} day(s) ago" >&2
+  fi
+}
+
+merge_hint() {
+  # Raw meeting signals that never got consolidated are memory the copilot
+  # holds but cannot cite as truth. Nudge when any are waiting.
+  local kdir="${KNOWLEDGE_DIR:-}" n=0 f
+  [ -n "$kdir" ] && [ -d "$kdir" ] || return 0
+  while IFS= read -r f; do
+    grep -qF "_merged:" "$f" || n=$((n+1))
+  done < <(grep -rlF "Meeting Copilot — Raw Signals" \
+             "$kdir/meetings" "$kdir/people/_staging" "$kdir/projects/_staging" 2>/dev/null || true)
+  [ "$n" -gt 0 ] &&
+    echo "prep: ${n} file(s) of raw meeting signals not yet merged into truth records — run: knowledge.sh merge" >&2
+  return 0
+}
+
 SUB="${1:-list}"
 case "$SUB" in
   list)
+    freshness_note; merge_hint
     fetch_events | node "$ROOT/cli/events.mjs" list
     ;;
   --pick)
@@ -50,9 +85,20 @@ case "$SUB" in
     cat "$PACK"
     ;;
   ''|*[!0-9]*)
-    sed -n '3,7p' "$0" | sed 's/^# \{0,1\}//'; exit 1
+    sed -n '3,8p' "$0" | sed 's/^# \{0,1\}//'; exit 1
     ;;
   *)
+    # A pack is a snapshot: --refresh pulls the last day from integrations
+    # first (interactive — tools need approval), so a 9am prep for a 4pm
+    # meeting can pick up the morning's email before it freezes.
+    if [ "${2:-}" = "--refresh" ]; then
+      echo "prep: refreshing knowledge (last 1 day) before building the pack..." >&2
+      "$ROOT/portable/knowledge.sh" sync 1
+      # Re-read the stamp sync just wrote so the note below tells the truth.
+      # shellcheck disable=SC1090
+      source "$CONF"
+    fi
+    freshness_note; merge_hint
     EVENTS="$(fetch_events)"
     STEM="$(node "$ROOT/cli/events.mjs" stem "$SUB" <<<"$EVENTS")"
     OUT="$PREP_DIR/$STEM.md"

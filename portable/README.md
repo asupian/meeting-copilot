@@ -15,7 +15,8 @@ from connected integrations.
 | `prompts/import-knowledge.md` | One-time: distill an existing notes system (Obsidian, Notion export, any folder) into the layout. Source is never modified. |
 | `prompts/sync-knowledge.md` | Repeatable: extract from connected integrations (calendar, email, meeting transcripts, docs) into the layout. Calendar-scoped so it never sweeps a whole mailbox. |
 | `prompts/build-prep-pack.md` | Per-meeting: `brain/prep-pack-instructions.md` genericized — placeholders for name/domain/knowledge dir, graceful degradation when profiles or tools are missing. |
-| `knowledge.sh` | Wrapper: `setup` / `init` / `import` / `sync` / `pack`. Fills the `{{PLACEHOLDER}}`s from `~/.meeting-copilot/config` and picks the execution mode. |
+| `prompts/merge-signals.md` | Repeatable: consolidate the copilot's own raw meeting signals (digest write-backs) into truth-tier records — the step that turns meeting N's commitments into meeting N+1's held facts. Skip it if your knowledge repo has its own analyze workflow. |
+| `knowledge.sh` | Wrapper: `setup` / `init` / `import` / `sync` / `merge` / `pack` / `events`. Fills the `{{PLACEHOLDER}}`s from `~/.meeting-copilot/config` and picks the execution mode. |
 
 ## The execution-mode split (learned from build-prep-pack.sh)
 
@@ -23,10 +24,16 @@ Headless `claude -p` can't reliably reach MCP integrations — server names
 differ per session, so an allowlist silently fails. The wrapper therefore
 runs:
 
-- **headless, file tools only**: `import`, and `pack --person/--paste`
+- **headless, file tools only**: `import`, `merge`, and `pack --person/--paste`
   (meeting details embedded in the prompt) — unattended-safe.
 - **interactive `claude`**: `sync`, and `pack --next` — these need the user's
   connected calendar/email/notes tools, and the user approves each tool once.
+
+`sync` also maintains freshness and trends: it stamps `KNOWLEDGE_SYNCED_AT`
+in the config (prep and live warn when it ages past 7 days; `copilot prep <n>
+--refresh` re-syncs the last day right before building a pack), and writes
+one-line `[trend]` facts when a metric it extracts has older points on file —
+slow drifts become collidable facts (see KNOWLEDGE.md "Writing rules").
 
 ## Typical user journey
 
