@@ -55,5 +55,16 @@ test/      replay-gate.sh + fixtures (the one place .jsonl is committed)
 - Card feedback: 👍/👎/dismiss → `POST /feedback` → session `feedback.jsonl`
   + live modulation in live.mjs (feedbackGap/feedbackBlock — tighten-only;
   exact no-op with zero votes, which is what keeps the replay gate meaningful).
+  Negatives persist to `~/.meeting-copilot/feedback-history.jsonl` (200-line
+  cap) and seed the next meeting's prompt bar (30-day window, max 10).
+- NO transcription retention: live.mjs deletes the session's transcript.jsonl
+  / screen.jsonl / frame.png after the digest unless `--keep-session` (only
+  the session defaults — explicit --transcript paths are never deleted).
+  review-server replays and fixture-making need `--keep-session`.
+- Config keys added 2026-07-22: `PREP_LOOKAHEAD_H`, `KNOWLEDGE_SYNCED_AT`
+  (stamped by sync; prep/live warn past 7 days), `KNOWLEDGE_MERGED_AT`.
+- `test/trigger-checks.sh` = rubric-tier fixtures (win-gloss, goal-drift,
+  trend-gloss) for the triggers the binary gate doesn't cover; run it for
+  substantive contract changes.
 - Headless `claude -p` cannot reliably reach MCP tools — anything needing
   integrations runs in an interactive session (see portable/README.md).

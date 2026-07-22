@@ -22,12 +22,13 @@ through your existing Claude Code login — no API key.
    the chart in view, a warning already written in your notes); drift against
    the goals you brought in; and good news worth naming out loud. Each fires
    only when it rests on a specific held fact — grounded or silent.
-3. **Intelligence, not a recording.** It keeps no recording of the meeting:
-   audio and pixels are processed on-device, in real time, into text signals
-   and one question at a time. What does persist stays on your Mac — the text
-   transcript and latest slide frame in a local session folder, and the
-   digest's commitments written into your knowledge dir (the exceptions to
-   "nothing leaves" are enumerated under Privacy posture).
+3. **Intelligence, not a recording.** It records nothing: audio and pixels
+   are processed on-device, in real time, into text signals and one question
+   at a time, and the working transcript is deleted when the meeting ends
+   (recording, if you want it, is another tool's job). What persists is
+   derived intelligence only — the digest's commitments in your knowledge dir
+   and your card votes. `--keep-session` retains the transcript for replay
+   tooling; the exceptions to "nothing leaves" are under Privacy posture.
 
 Mechanisms + design principles: [HOW-IT-WORKS.md](HOW-IT-WORKS.md). The
 knowledge layer (what the copilot knows): [portable/README.md](portable/README.md).
@@ -167,7 +168,9 @@ never got answered, written back into the knowledge dir as raw signals
 Cards carry 👍/👎/dismiss buttons. Votes are consumed live, in one direction
 only: recent negatives widen the gap between cards and raise the bar for
 similar candidates; upvotes only offset negatives — feedback never makes the
-copilot chattier (see HOW-IT-WORKS "The feedback loop").
+copilot chattier. Negative votes also carry across meetings: the last 30 days
+of downvoted questions seed the next meeting's bar from the first check
+(see HOW-IT-WORKS "The feedback loop").
 
 Card grounding is the one unbending rule: every card cites a specific fact —
 the prep pack or a `[truth]`-tier record (goals, financials, evidence,
@@ -195,8 +198,11 @@ The "me" channel is the mic. On speakers the mic hears the whole call as echo
   `--no-vision` disables it).
 - `[SENSITIVE]`/`[CONFIDENTIAL]` knowledge lines never surface in cards;
   recall drops them when externals are present; the guard warns on approach.
-- Transcripts and frames live in `~/.meeting-copilot/sessions/` (never the
-  repo). Only digest-derived raw signals land in the knowledge dir.
+- No transcription is retained: the working transcript, screen feed and
+  latest frame live in `~/.meeting-copilot/sessions/` during the meeting and
+  are deleted at Ctrl-C (pass `--keep-session` to keep them — needed for
+  `review-server` replays and fixture-making). The digest and feedback files
+  remain. Only digest-derived raw signals land in the knowledge dir.
 
 ## Flags (start.sh passes unknowns through to live.mjs)
 
@@ -209,6 +215,8 @@ The "me" channel is the mic. On speakers the mic hears the whole call as echo
 --no-staging        digest only; don't write the knowledge dir
 --externals         force-arm the disclosure guard
 --cap N             max cards per 30 min (default 20; model self-limits)
+--keep-session      keep the transcript/screen feed after the meeting
+                    (default: deleted at Ctrl-C — no transcription retained)
 --debounce MS       beat detection (default 900)
 --think N           cap/disable extended thinking (faster to first token,
                     but the quality bar is unvalidated without thinking)
