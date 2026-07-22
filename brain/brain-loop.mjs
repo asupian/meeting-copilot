@@ -185,7 +185,7 @@ async function tick(deltaLines, elapsedSec, totalGuessSec) {
       return;
     }
     emitCard(
-      { question: out.question, why: out.why || "", source: out.source || "" },
+      { question: out.question, type: out.type || "", why: out.why || "", source: out.source || "" },
       nowSec
     );
   }

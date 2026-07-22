@@ -27,7 +27,7 @@ import { readFileSync, readdirSync, existsSync, watch, appendFileSync, statSync,
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadSystem, streamBrain, partialString, asrCaveat, CONFIG, USER_NAME } from "./lib.mjs";
+import { loadSystem, streamBrain, partialString, asrCaveat, CONFIG, USER_NAME, CARD_TYPES } from "./lib.mjs";
 import { parseFacts, matchGuard, matchWindow } from "./matcher.mjs";
 import { makeAmbient, finishAmbient } from "./ambient.mjs";
 import { makeRecall } from "./recall.mjs";
@@ -291,7 +291,7 @@ function feedbackBlock() {
   // reaches the prompt.
   if (!votes.size && !pastNegatives.length) return "";
   const clip = (s) => String(s).replace(/\s+/g, " ").slice(0, 120);
-  const q = (id) => clip(cardById.get(id) || "");
+  const q = (id) => clip(cardById.get(id)?.question || "");
   const listOf = (v) => [...votes].filter(([, x]) => x.vote === v).map(([id]) => `- "${q(id)}"`);
   const down = listOf("down").slice(-5), dis = listOf("dismiss").slice(-5), up = listOf("up").slice(-3);
   const past = pastNegatives.map((e) => `- "${clip(e.question)}"`);
@@ -310,12 +310,32 @@ function feedbackBlock() {
   ].join("\n");
 }
 
+function droppedBlock() {
+  // The one gap mode anchored on the meeting itself: questions the room let
+  // drop. Only ambient tracks them; none open (or --no-ambient) is an exact
+  // no-op — and brain-loop never builds this block, so the replay gate's
+  // prompts stay byte-identical.
+  if (!ambient) return "";
+  const now = elapsedSec();
+  const open = ambient.state.questions.filter((q) => {
+    if (q.answered) return false;
+    const [m, s] = String(q.at).split(":").map(Number);
+    return now - (m * 60 + (s || 0)) > 10 * 60;   // dropped = open for 10+ min
+  }).slice(-5);
+  if (!open.length) return "";
+  return [
+    `QUESTIONS STILL OPEN (raised earlier in this meeting, never answered):`,
+    ...open.map((q) => `- [${q.at}] ${q.by}: ${String(q.text).replace(/\s+/g, " ").slice(0, 140)}`),
+  ].join("\n");
+}
+
 function buildUser(lines) {
   const delta = lines.length
     ? lines.map((l) => `${l.who === USER_NAME ? USER_NAME : "Them"}: ${l.text}`).join("\n")
     : "(no new speech — the shared screen changed)";
   const shown = surfaced.length ? surfaced.map((c, i) => `${i + 1}. ${c.question}`).join("\n") : "(none yet)";
   const fbBlock = feedbackBlock();
+  const dropBlock = droppedBlock();
   const recallBlock = recall ? recall.render() : "";
   // What's visible on the shared screen right now (fresh within ~90s). OCR'd
   // on-device; only the text reaches this prompt.
@@ -336,6 +356,7 @@ function buildUser(lines) {
     `New transcript since last check:\n${delta}${asrCaveat(delta)}`,
     ...(screenBlock ? [``, screenBlock] : []),
     ...(recallBlock ? [``, recallBlock] : []),
+    ...(dropBlock ? [``, dropBlock] : []),
     ``,
     `Decide: stay silent, or surface ONE grounded card. Always return the \`now\` object (current topic, confirmed speakers, goal bearing) and an updated one-paragraph rolling summary.`,
     ``,
@@ -401,6 +422,7 @@ async function check() {
     if (q && src) {
       json = {
         action: "card", question: q, source: src,
+        type: partialString(raw, "type") || "",
         why: partialString(raw, "why") || "",
         risk: partialString(raw, "risk") || "",
         win: partialString(raw, "win") || "",
@@ -438,7 +460,7 @@ async function check() {
     const now = elapsedSec();
     if (!canShow) {
       // Nothing was streamed, so nothing to retract — just log why it was held.
-      console.error(`brain: card suppressed (${withinGap ? `${gapSec > MIN_GAP_SEC ? "feedback " : ""}min-gap ${gapSec}s` : `cap ${CAP}/30min`}): ${json.question.slice(0, 50)}`);
+      console.error(`brain: ${json.type || "untyped"} card suppressed (${withinGap ? `${gapSec > MIN_GAP_SEC ? "feedback " : ""}min-gap ${gapSec}s` : `cap ${CAP}/30min`}): ${json.question.slice(0, 50)}`);
     } else {
       // Which channel found the anchor: a recall fact's kw/vec/kw+vec, or the
       // prep pack when the source doesn't trace to the recall working set.
@@ -449,9 +471,13 @@ async function check() {
       const origin = resolveOrigin(json.source, SHEET_MAP) ||
                      (anchor ? resolveOrigin(anchor.text, SHEET_MAP) : null) ||
                      resolveOrigin(json.why, SHEET_MAP);
+      // The model's detection class, whitelisted. Missing or invalid -> no
+      // label at all (the panel shows no chip); never guess one.
+      const cardType = CARD_TYPES.includes(json.type) ? json.type : undefined;
       const card = {
         type: "card",
         id: `c${++cardSeq}`,
+        cardType,
         question: json.question,
         why: json.why || "",
         source: json.source || "",
@@ -468,7 +494,7 @@ async function check() {
         totalMs,
       };
       surfaced.push({ question: card.question });
-      cardById.set(card.id, card.question);
+      cardById.set(card.id, { question: card.question, type: cardType });
       cardTimes.push(now);
       broadcast(card);
       const rule = "─".repeat(58);
@@ -910,7 +936,8 @@ async function shutdown() {
       if (votes.size) {
         const at = new Date().toISOString();
         const lines = [...votes].map(([id, v]) =>
-          JSON.stringify({ at, title: MEETING_TITLE, vote: v.vote, question: cardById.get(id) || "" }));
+          JSON.stringify({ at, title: MEETING_TITLE, vote: v.vote,
+                           question: cardById.get(id)?.question || "", type: cardById.get(id)?.type }));
         appendFileSync(FEEDBACK_HISTORY, lines.join("\n") + "\n");
         const all = readFileSync(FEEDBACK_HISTORY, "utf8").split("\n").filter(Boolean);
         if (all.length > 200) writeFileSync(FEEDBACK_HISTORY, all.slice(-200).join("\n") + "\n");

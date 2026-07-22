@@ -217,6 +217,15 @@
     margin-left: 6px; vertical-align: 1px; white-space: nowrap;
   }
   .via.kwvec { color: var(--up); border-color: var(--up-soft); }
+  /* detection class: what KIND of card this is (collision / gap / reinforce) */
+  .dtype {
+    font-size: 10px; letter-spacing: .03em; text-transform: uppercase;
+    border: 1px solid var(--rule); border-radius: 8px; padding: 0 6px;
+    margin-left: 6px; vertical-align: 1px; white-space: nowrap; color: var(--muted);
+  }
+  .dtype.collision { color: var(--down); border-color: var(--down); }
+  .dtype.gap       { color: #d9a13b; border-color: #d9a13b; }
+  .dtype.reinforce { color: var(--up); border-color: var(--up-soft); }
 
   .actions { margin-top: 8px; display: flex; gap: 6px; }
   button {
@@ -412,6 +421,9 @@ es.onmessage = (e) => {
     const meta = document.createElement("div");
     meta.className = "meta";
     const via = m.via ? `<span class="via${m.via === "kw+vec" ? " kwvec" : ""}">${escapeHtml(m.via)}</span>` : "";
+    // Detection-class chip; class name whitelisted (old sessions carry none).
+    const dtype = ["collision", "gap", "reinforce"].includes(m.cardType)
+      ? `<span class="dtype ${m.cardType}">${m.cardType}</span>` : "";
     // Inline repo paths become links; if the src text carries none, the src
     // label itself links to the card's anchor doc (recall record or prep pack).
     const srcHtml = linkify(m.source);
@@ -421,7 +433,7 @@ es.onmessage = (e) => {
     // first-class on the src row, knowledge file as the dotted fallback.
     const origin = m.origin?.url
       ? `<a class="origin" data-u="${escapeHtml(m.origin.url)}">↗ ${escapeHtml(m.origin.label)}${m.origin.exact ? "" : " (search)"}</a>` : "";
-    meta.innerHTML = `<b>why</b> ${linkify(m.why)}<br>${srcLabel} ${srcHtml}${origin}${via}`;
+    meta.innerHTML = `<b>why</b> ${linkify(m.why)}<br>${srcLabel} ${srcHtml}${origin}${dtype}${via}`;
     el.appendChild(meta);
 
     if (m.risk) {
