@@ -33,6 +33,9 @@ Read first: [README.md](../README.md) (operations), [HOW-IT-WORKS.md](../HOW-IT-
 ## Layout
 
 ```
+copilot    the front door CLI: pure router to the journey modules + config
+onboarding/ prep/ live/   the three journey modules: one thin script + README each
+cli/       events.mjs (calendar picker helpers) + common.sh (shared plumbing)
 capture/   Swift: meetingtap (audio->transcript), screentap (window OCR), TCC bundles
 brain/     Node: live.mjs (server), contracts, matcher, recall, ambient, origins
 panel/     floating NSPanel + index.html (the whole UI)
@@ -45,5 +48,12 @@ test/      replay-gate.sh + fixtures (the one place .jsonl is committed)
 - Knowledge root: `--knowledge` flag > `KNOWLEDGE_DIR` in
   `~/.meeting-copilot/config` > `~/.meeting-copilot/knowledge`.
 - Session data: `~/.meeting-copilot/sessions/`, never the repo.
+- Per-meeting prep packs: `~/.meeting-copilot/prep/<date>[-HHMM]-<slug>.md`
+  (written by `copilot prep <n>`); the legacy single
+  `~/.meeting-copilot/prep-pack.md` stays the default and is refreshed on
+  every build (write-through), so plain `./start.sh` keeps working.
+- Card feedback: 👍/👎/dismiss → `POST /feedback` → session `feedback.jsonl`
+  + live modulation in live.mjs (feedbackGap/feedbackBlock — tighten-only;
+  exact no-op with zero votes, which is what keeps the replay gate meaningful).
 - Headless `claude -p` cannot reliably reach MCP tools — anything needing
   integrations runs in an interactive session (see portable/README.md).

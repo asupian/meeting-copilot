@@ -9,6 +9,26 @@ cards; that's the tool working, not failing.
 Everything heavy runs on-device (transcription, OCR). The reasoning runs
 through your existing Claude Code login — no API key.
 
+## Principles
+
+1. **The freshest version of what you know, in the room.** The prep pack and
+   live recall pull your most current held facts into the meeting — the point
+   is to close the gap between what you know and what you can summon under
+   pressure. The room still outranks the record: retrieved facts arrive
+   dated, phrased as "I have X on file — is that current?", never as
+   corrections.
+2. **It watches for collisions, drift — and wins.** Factual contradictions
+   with your records; risks the room is glossing past (a concerning trend on
+   the chart in view, a warning already written in your notes); drift against
+   the goals you brought in; and good news worth naming out loud. Each fires
+   only when it rests on a specific held fact — grounded or silent.
+3. **Intelligence, not a recording.** It keeps no recording of the meeting:
+   audio and pixels are processed on-device, in real time, into text signals
+   and one question at a time. What does persist stays on your Mac — the text
+   transcript and latest slide frame in a local session folder, and the
+   digest's commitments written into your knowledge dir (the exceptions to
+   "nothing leaves" are enumerated under Privacy posture).
+
 Mechanisms + design principles: [HOW-IT-WORKS.md](HOW-IT-WORKS.md). The
 knowledge layer (what the copilot knows): [portable/README.md](portable/README.md).
 Design rationale and history live in the original home repo (not distributed).
@@ -74,12 +94,30 @@ flowchart LR
   stealing focus (never activate the app — that yanks the user out of the
   meeting's Space). All UI lives in `panel/index.html`, served fresh by live.mjs.
 
+## The three journeys
+
+The `copilot` command is the front door, organized by what you're doing rather
+than by which binary does it. Each journey lives in its own directory as a
+thin script plus a README; every underlying engine still works on its own.
+
+| Journey | Command | Module |
+|---|---|---|
+| **Onboard** — install, build what the copilot knows, try it | `copilot onboard [knowledge \| import <dir> \| demo]` | [onboarding/](onboarding/) → `setup.sh`, `portable/`, the replay demo above |
+| **Prep** — pick a meeting, build + view prep packs | `copilot prep [list \| <n> \| --pick \| show [name]]` | [prep/](prep/) → `portable/knowledge.sh`, `cli/events.mjs`; packs in `~/.meeting-copilot/prep/` |
+| **Live** — run the copilot in the meeting | `copilot live [name] [flags]` | [live/](live/) → `start.sh` (capture + brain + panel), pack picked by name or start time |
+
+`copilot prep list` numbers your upcoming meetings (via the `gws` CLI when
+installed); `copilot prep 2` builds a pack for meeting 2 and stores it per
+meeting. `copilot live` with no arguments picks the pack whose start time
+brackets now. `copilot config set PREP_LOOKAHEAD_H 24` widens the calendar
+window (default 12h).
+
 ## Quick start
 
 One-time:
 
 ```bash
-./setup.sh
+./copilot onboard        # or directly: ./setup.sh
 ```
 
 That's the whole build: it gates on macOS 26 (the on-device transcriber's
@@ -91,15 +129,16 @@ live permissions self-test — click Allow on the two dialogs.
 Then build the knowledge dir — the facts the copilot grounds its cards in:
 
 ```bash
-./portable/knowledge.sh setup    # guided intake wizard (~10-15 min), or:
+./copilot onboard knowledge      # guided intake wizard (~10-15 min), or:
 ./portable/knowledge.sh init     # bare config now, import/sync later
 ```
 
 Each meeting:
 
 ```bash
-./portable/knowledge.sh pack --next   # prep pack for the next calendar meeting
-./start.sh                            # capture + brain + panel; Ctrl-C = digest
+./copilot prep list   # upcoming meetings, numbered
+./copilot prep 1      # build the pack for meeting 1  (legacy: knowledge.sh pack --next)
+./copilot live        # capture + brain + panel; Ctrl-C = digest  (legacy: ./start.sh)
 ```
 
 First screentap launch prompts once for Screen Recording. `start.sh` also
@@ -124,6 +163,11 @@ End of meeting (Ctrl-C): digest of commitments — spoken AND slide-stated
 ("Resolve open threads (DRI: Parker)[ETA: 4/27]" counts) — plus questions that
 never got answered, written back into the knowledge dir as raw signals
 (staging inboxes when the layout has them, else a dated `meetings/` file).
+
+Cards carry 👍/👎/dismiss buttons. Votes are consumed live, in one direction
+only: recent negatives widen the gap between cards and raise the bar for
+similar candidates; upvotes only offset negatives — feedback never makes the
+copilot chattier (see HOW-IT-WORKS "The feedback loop").
 
 Card grounding is the one unbending rule: every card cites a specific fact —
 the prep pack or a `[truth]`-tier record (goals, financials, evidence,
@@ -195,6 +239,9 @@ path that buys diarization + correct currency ($0.41/audio-hour).
 ## Files
 
 ```
+copilot             the front door: routes to the three journey modules + config
+onboarding/ prep/ live/   one thin script + README per journey (the engines stay below)
+cli/                events.mjs (calendar picker helpers) + common.sh (shared plumbing)
 setup.sh            one-time: OS gate, deps, build, cert, bundles, permissions
 start.sh            one command: capture + brain + panel; Ctrl-C stops + digests
 run.sh              capture only (meetingtap + screentap + roster generation)
