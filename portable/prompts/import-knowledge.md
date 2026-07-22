@@ -24,6 +24,25 @@ how much to TRUST a fact by which file it lives in.
 When in doubt, context. A wrong "truth" fact makes the copilot confidently
 wrong in a live meeting — the worst failure this tool has.
 
+# Source-specific handling — detect the flavor first
+
+Look at the folder's shape before walking it:
+
+- **Obsidian vault** (has `.obsidian/`): skip `.obsidian/`, `templates/`, and
+  attachment folders entirely. `[[wikilinks]]` are entity mentions — a name
+  that recurs as a wikilink is a strong people/project signal; strip the
+  brackets in extracted text. YAML frontmatter often carries structured
+  fields (dates, status, tags) — trust it over prose. Daily notes / journals
+  are high-noise: extract only dated commitments, decisions, and numbers;
+  never import a journal wholesale.
+- **Notion export** (hash-suffixed names like `Project abc123….md`): strip
+  the hash from any slug you derive. `.csv` files are exported DATABASES —
+  often the highest-value files in the export (people tables, project
+  trackers): each row is a record; map columns onto the layout (a row's
+  status/date/owner columns beat prose). Nested page folders mirror the page
+  tree; shallow pages near the root usually matter most.
+- **Plain markdown/text folder**: no special casing; the buckets below.
+
 # Procedure
 
 1. INVENTORY. Walk {{SOURCE}}. Note obvious buckets: people notes, project

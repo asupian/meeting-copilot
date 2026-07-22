@@ -41,6 +41,14 @@ EMAIL:
 - Every extracted fact carries `(src: email:<sender> "<subject>")` — this is
   how a live card links back to the real thread.
 
+SLACK (or similar chat, when connected):
+- Search the lookback window for threads involving roster people. Extract the
+  same signal set as email: commitments, deadlines, numbers stated, open asks
+  never answered. Chat is noisy — take only what passes the truth-file bar;
+  skip banter and reactions.
+- Every extracted fact carries `(src: slack:#<channel> <date>)` (the live
+  panel resolves these to real links when SLACK_BASE is configured).
+
 DOCS/DRIVE:
 - Only docs that recently changed AND are tied to a roster person or an
   existing initiative (shared by them, named after the project). Extract

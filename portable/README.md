@@ -11,7 +11,7 @@ from connected integrations.
 | File | What it is |
 |---|---|
 | `KNOWLEDGE.md` | The format spec: layout, truth-vs-context tiers, writing rules. The public contract; matches `recall.mjs`'s gate as shipped (zero code change). |
-| `prompts/setup-wizard.md` | Guided intake: collects identity + domains, probes which integrations are connected, ALWAYS pulls in existing sources via import/sync first (written artifacts are the mandatory base), then optionally interviews the user for head-only priors (reads on people, unwritten numbers) — targeted at the gaps the pull-in left. Re-running tops up instead of restarting. |
+| `prompts/setup-wizard.md` | Guided intake, presumptive KB-first: one opening message (identity derived from git config + "where do you keep your notes?", Obsidian vaults auto-detected), then ingest — local folders/exports via import-knowledge.md, live Notion via connector under the same extraction rules. Channels (calendar, email, Slack, docs) are the LAST RESORT, auto-building 30 days only when no KB exists (roster defaulted, veto not selection). No interview. Under 5 min of user attention; re-running tops up. |
 | `prompts/import-knowledge.md` | One-time: distill an existing notes system (Obsidian, Notion export, any folder) into the layout. Source is never modified. |
 | `prompts/sync-knowledge.md` | Repeatable: extract from connected integrations (calendar, email, meeting transcripts, docs) into the layout. Calendar-scoped so it never sweeps a whole mailbox. |
 | `prompts/build-prep-pack.md` | Per-meeting: `brain/prep-pack-instructions.md` genericized — placeholders for name/domain/knowledge dir, graceful degradation when profiles or tools are missing. |
@@ -38,7 +38,7 @@ slow drifts become collidable facts (see KNOWLEDGE.md "Writing rules").
 ## Typical user journey
 
 ```bash
-./knowledge.sh setup                   # guided: interview -> priors -> import/sync offers
+./knowledge.sh setup                   # guided: identity confirm -> ingest your KB (channels as fallback)
 ./knowledge.sh sync                    # weekly: last 7 days from integrations
 ../copilot prep list                   # upcoming meetings, numbered
 ../copilot prep 2                      # pack for meeting 2 -> ~/.meeting-copilot/prep/<date>-<slug>.md
