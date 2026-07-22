@@ -7,6 +7,10 @@ import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+// The card taxonomy, ladder order. The contract defines them; live.mjs
+// whitelists the model's `type` against this; the panel colors its chip by it.
+export const CARD_TYPES = ["collision", "gap", "reinforce"];
+
 // ~/.meeting-copilot/config — KEY="VALUE" lines written by portable/knowledge.sh
 // (USER_NAME, ORG_DOMAIN, KNOWLEDGE_DIR). Missing file -> {}; callers default.
 export function loadConfig(path = join(homedir(), ".meeting-copilot", "config")) {
