@@ -14,7 +14,10 @@
 // Serves the panel over plain HTTP + Server-Sent Events (no dependencies):
 //   GET  /            panel HTML
 //   GET  /events      SSE stream: thinking | partial | card | silent
-//   POST /feedback    {cardId, vote:"up"|"down"} -> appended to feedback.jsonl
+//   POST /feedback    {cardId, vote:"up"|"down"|"dismiss"} -> appended to
+//                     feedback.jsonl AND consumed live: negative votes tighten
+//                     the card cadence and raise the bar for similar cards
+//                     (feedback only ever TIGHTENS — see feedbackGap/feedbackBlock)
 //
 // Usage: node brain/live.mjs [--transcript f] [--prep f] [--port 8787]
 
@@ -196,6 +199,8 @@ let adoptedSlides = "";        // pinned slide-summary wording for the current s
 let adoptedSlidesAt = 0;
 const surfaced = [];
 const cardTimes = [];
+const cardById = new Map();    // id -> question, so feedback can name what was voted on
+const votes = new Map();       // cardId -> {vote, atMs}; latest vote per card wins
 let startEpoch = null;
 let debounceTimer = null;
 let screenKick = false;        // a slide flip may run a check without new speech
@@ -242,11 +247,51 @@ function elapsedSec() {
   return Math.round((Date.now() - startEpoch) / 1000);
 }
 
+// ---------- feedback consumers ----------
+// Feedback only ever TIGHTENS. Both consumers are exact no-ops with zero votes
+// (block absent, gap 0), which is what keeps a feedback-free run — including
+// the replay gate — byte-identical to a build without them.
+function feedbackGap() {
+  // Extra seconds of min-gap from recent negative votes. Upvotes only offset
+  // negatives; they never lower the gap below --min-gap and never touch --cap.
+  const now = Date.now();
+  let net = 0;
+  for (const { vote, atMs } of votes.values()) {
+    if (now - atMs > 10 * 60_000) continue;              // 10-min recency window
+    net += vote === "down" ? 1 : vote === "dismiss" ? 0.5 : -1;
+  }
+  return net >= 4 ? 180 : net >= 2 ? 90 : 0;
+}
+
+function feedbackBlock() {
+  // Conditional block, not a contract line: same reasoning as asrCaveat — a
+  // rule that only appears when relevant stays salient. Quotes only questions
+  // the model itself wrote (newline-stripped, capped), so no user free text
+  // reaches the prompt.
+  if (!votes.size) return "";
+  const q = (id) => String(cardById.get(id) || "").replace(/\s+/g, " ").slice(0, 120);
+  const listOf = (v) => [...votes].filter(([, x]) => x.vote === v).map(([id]) => `- "${q(id)}"`);
+  const down = listOf("down").slice(-5), dis = listOf("dismiss").slice(-5), up = listOf("up").slice(-3);
+  return [
+    `FEEDBACK ON EARLIER CARDS (${USER_NAME}'s votes on the cards above, this meeting):`,
+    ...(down.length ? [`Downvoted — not worth the interruption:`, ...down] : []),
+    ...(dis.length ? [`Dismissed (weak negative):`, ...dis] : []),
+    ...(up.length ? [`Upvoted — the bar was right here:`, ...up] : []),
+    `Read this as one-directional calibration of your bar: a new candidate that`,
+    `resembles a downvoted or dismissed card (same fact, same angle, same kind of`,
+    `trigger) must clear a HIGHER bar — surface it only if clearly stronger (a`,
+    `harder trigger, a fresher fact, a live collision); when in doubt, stay silent.`,
+    `Upvotes are NOT a request for more cards or looser grounding. Feedback never`,
+    `lowers the bar: every card still cites a held fact, and silence stays correct.`,
+  ].join("\n");
+}
+
 function buildUser(lines) {
   const delta = lines.length
     ? lines.map((l) => `${l.who === USER_NAME ? USER_NAME : "Them"}: ${l.text}`).join("\n")
     : "(no new speech — the shared screen changed)";
   const shown = surfaced.length ? surfaced.map((c, i) => `${i + 1}. ${c.question}`).join("\n") : "(none yet)";
+  const fbBlock = feedbackBlock();
   const recallBlock = recall ? recall.render() : "";
   // What's visible on the shared screen right now (fresh within ~90s). OCR'd
   // on-device; only the text reaches this prompt.
@@ -262,6 +307,7 @@ function buildUser(lines) {
     `Rolling summary so far:\n${rollingSummary}`,
     ``,
     `Cards already shown to ${USER_NAME} (do NOT repeat these or minor variants):\n${shown}`,
+    ...(fbBlock ? [``, fbBlock] : []),
     ``,
     `New transcript since last check:\n${delta}${asrCaveat(delta)}`,
     ...(screenBlock ? [``, screenBlock] : []),
@@ -290,7 +336,9 @@ async function check() {
   // panel and then yank it away when the card turns out to be suppressed.
   const nowPre = elapsedSec();
   const lastPre = cardTimes.length ? cardTimes[cardTimes.length - 1] : -Infinity;
-  const withinGap = nowPre - lastPre < MIN_GAP_SEC;
+  // Recent negative feedback widens the effective gap (never narrows it).
+  const gapSec = Math.max(MIN_GAP_SEC, feedbackGap());
+  const withinGap = nowPre - lastPre < gapSec;
   const atCap = cardTimes.filter((t) => nowPre - t <= 30 * 60).length >= CAP;
   const canShow = !withinGap && !atCap;
 
@@ -366,7 +414,7 @@ async function check() {
     const now = elapsedSec();
     if (!canShow) {
       // Nothing was streamed, so nothing to retract — just log why it was held.
-      console.error(`brain: card suppressed (${withinGap ? `min-gap ${MIN_GAP_SEC}s` : `cap ${CAP}/30min`}): ${json.question.slice(0, 50)}`);
+      console.error(`brain: card suppressed (${withinGap ? `${gapSec > MIN_GAP_SEC ? "feedback " : ""}min-gap ${gapSec}s` : `cap ${CAP}/30min`}): ${json.question.slice(0, 50)}`);
     } else {
       // Which channel found the anchor: a recall fact's kw/vec/kw+vec, or the
       // prep pack when the source doesn't trace to the recall working set.
@@ -396,6 +444,7 @@ async function check() {
         totalMs,
       };
       surfaced.push({ question: card.question });
+      cardById.set(card.id, card.question);
       cardTimes.push(now);
       broadcast(card);
       const rule = "─".repeat(58);
@@ -752,8 +801,13 @@ const server = createServer((req, res) => {
     req.on("end", () => {
       try {
         const fb = JSON.parse(body);
-        appendFileSync(FEEDBACK, JSON.stringify({ ...fb, at: new Date().toISOString() }) + "\n");
-        console.error(`feedback: ${fb.vote} on ${fb.cardId}`);
+        if (typeof fb.cardId === "string" && ["up", "down", "dismiss"].includes(fb.vote)) {
+          appendFileSync(FEEDBACK, JSON.stringify({ ...fb, at: new Date().toISOString() }) + "\n");
+          // Only cards this session actually surfaced modulate behavior; a
+          // stale id (panel reloaded against a restarted server) is logged only.
+          if (cardById.has(fb.cardId)) votes.set(fb.cardId, { vote: fb.vote, atMs: Date.now() });
+          console.error(`feedback: ${fb.vote} on ${fb.cardId}${cardById.has(fb.cardId) ? "" : " (unknown id — logged, not consumed)"}`);
+        }
       } catch {}
       res.writeHead(204).end();
     });

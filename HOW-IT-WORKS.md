@@ -164,6 +164,26 @@ shows live; Ctrl-C turns the state into a digest plus raw-signal files in
 `people/_staging` and `projects/_staging`, shaped exactly like the GATHER
 workflows write so ANALYZE consumes them unchanged.
 
+## The feedback loop: votes tighten, never loosen
+
+Cards carry 👍/👎/dismiss. Every vote is appended to the session's
+`feedback.jsonl` (the audit log) and consumed live by two mechanisms, both
+built so they can only make the copilot QUIETER:
+
+- **Volume**: net negative votes across distinct cards in the last 10 minutes
+  (👎 = 1, dismiss = 0.5 — dismissing is ambiguous, so it counts half; 👍 = −1)
+  widen the effective min-gap between cards: net ≥ 2 → 90s, ≥ 4 → 180s.
+  Upvotes only offset negatives; the gap never drops below `--min-gap` and
+  `--cap` never changes.
+- **Topic**: the next check's prompt gains a FEEDBACK block quoting the voted
+  questions (the model's own words — no user free text enters the prompt),
+  instructing that a candidate resembling a downvoted card must clear a
+  HIGHER bar, and that upvotes are not a request for more cards.
+
+With zero votes both are exact no-ops — the prompt is byte-identical and the
+gap stays at `--min-gap` — which is what keeps the replay gate (no feedback
+events) meaningful. Feedback is per-session; nothing persists across meetings.
+
 ## Latency budget
 
 | Stage | Cost | On the card path? |
@@ -178,6 +198,7 @@ workflows write so ANALYZE consumes them unchanged.
 | slide OCR | ~4s cadence | no |
 | slide summary | next check (12s kick) | no |
 | chart vision | ~10s, once per slide | no |
+| feedback consume | ~0ms (two Map reads at prompt assembly) | no |
 
 The floor is extended thinking, kept deliberately: it is what makes the model
 actually cross-reference rather than pattern-match. `--think N` trades that

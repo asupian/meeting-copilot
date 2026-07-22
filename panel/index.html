@@ -338,7 +338,8 @@ function vote(cardId, v, btn) {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ cardId, vote: v }),
-  });
+  }).catch(() => {});               // server may already be gone (post-meeting click)
+  if (v === "dismiss") return;      // no highlight — the card is leaving the DOM
   const group = btn.parentElement;
   group.querySelectorAll("button").forEach(b => b.classList.remove("voted-up", "voted-down"));
   btn.classList.add(v === "up" ? "voted-up" : "voted-down");
@@ -446,7 +447,7 @@ es.onmessage = (e) => {
     actions.className = "actions";
     const up = mkBtn("👍", () => vote(m.id, "up", up));
     const down = mkBtn("👎", () => vote(m.id, "down", down));
-    const dismiss = mkBtn("dismiss", () => el.remove());
+    const dismiss = mkBtn("dismiss", () => { vote(m.id, "dismiss", dismiss); el.remove(); });
     actions.append(up, down, dismiss);
     if (m.firstTokenMs != null) {
       const lat = document.createElement("span");
