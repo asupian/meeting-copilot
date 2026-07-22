@@ -113,8 +113,9 @@ if (cmd === "match") {
     }
     const evs = readEvents(raw);
     if (cmd === "list") list(evs);
+    else if (cmd === "count") process.stdout.write(String(evs.length) + "\n");
     else if (cmd === "json") process.stdout.write(JSON.stringify(pick(evs, args[0]), null, 2) + "\n");
     else if (cmd === "stem") process.stdout.write(stemOf(pick(evs, args[0])) + "\n");
-    else die("usage: events.mjs list|json <n>|stem <n>|pack-stem|match <dir> <hours>");
+    else die("usage: events.mjs list|count|json <n>|stem <n>|pack-stem|match <dir> <hours>");
   });
 }

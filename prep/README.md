@@ -7,6 +7,7 @@ version of what you know, in the room).
 ```bash
 copilot prep list         # upcoming meetings, numbered (12h window; PREP_LOOKAHEAD_H to widen)
 copilot prep 2            # build the pack for meeting 2
+copilot prep --all        # packs for EVERY upcoming meeting (skips existing; onboarding runs this)
 copilot prep show [name]  # view the newest pack, or one matched by name
 copilot prep --pick       # no gws CLI? interactive fallback (claude session picks the meeting)
 ```

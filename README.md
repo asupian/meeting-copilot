@@ -34,29 +34,6 @@ Mechanisms + design principles: [HOW-IT-WORKS.md](HOW-IT-WORKS.md). The
 knowledge layer (what the copilot knows): [portable/README.md](portable/README.md).
 Design rationale and history live in the original home repo (not distributed).
 
-## See it work in two minutes (no permissions, no mic)
-
-Replaying a committed fixture through the real brain needs only `node` and a
-logged-in `claude`:
-
-```bash
-node brain/brain-loop.mjs \
-  --replay test/fixtures/rivertech/fixture.jsonl \
-  --prep   test/fixtures/rivertech/prep-pack.md \
-  --title  "Vendor Sync"
-```
-
-The fixture is a vendor renewal call where the vendor says the engagement is
-"thirty five thousand flat" — but the prep pack holds the agreed SOW at
-$42,500. About 30-60s in (one real model call per ~45s of meeting time) you
-should see the copilot's one card: a question about which number is current,
-citing the SOW fact. A second, softer card gets suppressed by the card
-budget. That is the whole product in miniature: grounded collision in,
-one question out, silence otherwise.
-
-`./test/replay-gate.sh` runs the same replay with pass/fail assertions — it
-is the regression gate for any change to `brain/`.
-
 ## Architecture
 
 ```mermaid
@@ -103,7 +80,7 @@ thin script plus a README; every underlying engine still works on its own.
 
 | Journey | Command | Module |
 |---|---|---|
-| **Onboard** — install, build what the copilot knows, try it | `copilot onboard [knowledge \| import <dir> \| demo]` | [onboarding/](onboarding/) → `setup.sh`, `portable/`, the replay demo above |
+| **Onboard** — build the tool, then build what it knows | `copilot onboard [knowledge \| import <dir>]` | [onboarding/](onboarding/) → `setup.sh`, then the `portable/` knowledge wizard |
 | **Prep** — pick a meeting, build + view prep packs | `copilot prep [list \| <n> \| --pick \| show [name]]` | [prep/](prep/) → `portable/knowledge.sh`, `cli/events.mjs`; packs in `~/.meeting-copilot/prep/` |
 | **Live** — run the copilot in the meeting | `copilot live [name] [flags]` | [live/](live/) → `start.sh` (capture + brain + panel), pack picked by name or start time |
 
@@ -115,32 +92,51 @@ window (default 12h).
 
 ## Quick start
 
-One-time:
+One guided command, under 5 minutes of your attention:
 
 ```bash
-./copilot onboard        # or directly: ./setup.sh
+./copilot onboard
 ```
 
-That's the whole build: it gates on macOS 26 (the on-device transcriber's
-floor), checks dependencies (swiftc, node, claude, optionally qmd), compiles
-the capture binaries, offers to create the self-signed signing cert (so
-permission grants survive rebuilds), bundles + signs the apps, and runs a
-live permissions self-test — click Allow on the two dialogs.
+While the capture binaries compile in the background, a short claude session
+connects your knowledge: it confirms who you are (derived from git config,
+one keystroke), asks where your notes live — an Obsidian vault (it looks for
+one first), Notion, or any folder of markdown — and ingests them as the
+copilot's knowledge dir. No notes anywhere? It falls back to connecting your
+channels (calendar, email, Slack, docs) and auto-building from the last 30
+days. Then the build finishes: signing cert (so permission grants survive
+rebuilds), app bundles, and a live self-test — click Allow on the two
+dialogs.
 
-Then build the knowledge dir — the facts the copilot grounds its cards in:
+Two closing moves, both automatic: it offers a **trial on one of your own
+recordings** (point it at a Zoom/Meet export; transcribed on-device, packed
+from your new knowledge dir, replayed through the brain — cards cite YOUR
+facts, and zero cards is a normal outcome), and then it **preps every
+upcoming meeting on your behalf** — a pack per calendar event, so at meeting
+time the only command left is `copilot live`.
 
-```bash
-./copilot onboard knowledge      # guided intake wizard (~10-15 min), or:
-./portable/knowledge.sh init     # bare config now, import/sync later
-```
+Every card the copilot ever shows must cite a fact from that dir; re-running
+`copilot onboard knowledge` tops it up, `copilot onboard replay <file>`
+re-runs the trial. (`./setup.sh` is the build alone.)
 
-Each meeting:
+That's meeting-ready. Each meeting:
 
 ```bash
 ./copilot prep list   # upcoming meetings, numbered
 ./copilot prep 1      # build the pack for meeting 1  (legacy: knowledge.sh pack --next)
 ./copilot live        # capture + brain + panel; Ctrl-C = digest  (legacy: ./start.sh)
 ```
+
+Keep the knowledge dir fresh — the biggest lever on card quality:
+
+```bash
+./portable/knowledge.sh sync     # weekly: pull the last N days from integrations
+./copilot onboard import <dir>   # distill another notes folder (Obsidian, Notion export...)
+./portable/knowledge.sh merge    # fold past meetings' signals into truth records
+```
+
+A hand-written prep pack works with zero knowledge dir — the format is the
+contract, the prompts are conveniences ([portable/README.md](portable/README.md)).
 
 First screentap launch prompts once for Screen Recording. `start.sh` also
 refreshes the qmd recall index and backgrounds the embedding pass.
@@ -243,7 +239,8 @@ The "me" channel is the mic. On speakers the mic hears the whole call as echo
 ./test/replay-gate.sh                  # the regression gate: replay + assertions
 ./selftest.sh                          # plays a phrase, verifies the system-audio tap
 ./capture/screentap --file img.png     # OCR one image, no permissions needed
-node brain/brain-loop.mjs --replay ... # replay any transcript fixture (see top)
+node brain/brain-loop.mjs --replay test/fixtures/rivertech/fixture.jsonl \
+  --prep test/fixtures/rivertech/prep-pack.md   # replay a fixture through the real brain
 node brain/review-server.mjs           # watch a replay with cards popping at their timestamps
 ```
 

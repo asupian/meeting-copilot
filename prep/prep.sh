@@ -4,6 +4,7 @@
 #   prep.sh [list]              upcoming meetings, numbered (needs the gws CLI)
 #   prep.sh <n> [--refresh]     build the pack for meeting n (-> ~/.meeting-copilot/prep/);
 #                               --refresh syncs the last day from integrations first
+#   prep.sh --all               build packs for EVERY upcoming meeting (skips existing)
 #   prep.sh --pick              no-gws fallback: interactive pack --next, then archive
 #   prep.sh show [name]         view the newest pack, or one matched by name
 #
@@ -61,6 +62,31 @@ case "$SUB" in
     freshness_note; merge_hint
     fetch_events | node "$ROOT/cli/events.mjs" list
     ;;
+  --all)
+    # Prep every upcoming meeting in the lookahead window — used by onboarding
+    # to prep ahead on the user's behalf; re-runs skip already-built packs.
+    freshness_note; merge_hint
+    EVENTS="$(fetch_events)"
+    N="$(node "$ROOT/cli/events.mjs" count <<<"$EVENTS")"
+    mkdir -p "$PREP_DIR"
+    BUILT=0
+    for i in $(seq 1 "$N"); do
+      STEM="$(node "$ROOT/cli/events.mjs" stem "$i" <<<"$EVENTS")"
+      OUT="$PREP_DIR/$STEM.md"
+      if [ -s "$OUT" ]; then echo "prep: $STEM — already packed, skipping" >&2; continue; fi
+      echo "prep: building pack $i/$N — $STEM" >&2
+      if node "$ROOT/cli/events.mjs" json "$i" <<<"$EVENTS" |
+           "$ROOT/portable/knowledge.sh" pack --paste --out "$OUT"; then
+        BUILT=$((BUILT+1))
+      else
+        echo "prep: pack for $STEM FAILED — continuing with the rest" >&2
+      fi
+    done
+    # Write-through the NEXT meeting's pack so plain ./start.sh finds it.
+    FIRST="$(node "$ROOT/cli/events.mjs" stem 1 <<<"$EVENTS")"
+    if [ -s "$PREP_DIR/$FIRST.md" ]; then cp "$PREP_DIR/$FIRST.md" "$LEGACY_PACK"; fi
+    echo "prep: $BUILT pack(s) built, $((N - BUILT)) skipped/failed; copilot live picks by start time" >&2
+    ;;
   --pick)
     # No-gws path: the existing interactive pack builder, then archive the
     # result into the per-meeting store (date-only stem — no start time known).
@@ -85,7 +111,7 @@ case "$SUB" in
     cat "$PACK"
     ;;
   ''|*[!0-9]*)
-    sed -n '3,8p' "$0" | sed 's/^# \{0,1\}//'; exit 1
+    sed -n '3,9p' "$0" | sed 's/^# \{0,1\}//'; exit 1
     ;;
   *)
     # A pack is a snapshot: --refresh pulls the last day from integrations

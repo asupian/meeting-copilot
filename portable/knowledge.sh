@@ -94,8 +94,14 @@ fi
 if [ "$CMD" = "init" ]; then
   mkdir -p "${HOME}/.meeting-copilot/knowledge"/{people,initiatives,meetings,notes}
   if [ ! -f "$CONF" ]; then
-    printf 'What is your name (as attendees would say it)? ' ; read -r NAME
-    printf 'Your organization email domain (e.g. acme.com; attendees outside it count as external)? ' ; read -r DOMAIN
+    # Prefill from git config: usually two Enter keys instead of two answers.
+    GUESS_NAME="$(git config user.name 2>/dev/null || true)"
+    GUESS_DOMAIN="$(git config user.email 2>/dev/null | sed -n 's/.*@//p' || true)"
+    printf 'What is your name (as attendees would say it)%s? ' "${GUESS_NAME:+ [$GUESS_NAME]}"
+    read -r NAME; NAME="${NAME:-$GUESS_NAME}"
+    printf 'Your organization email domain (attendees outside it count as external)%s? ' "${GUESS_DOMAIN:+ [$GUESS_DOMAIN]}"
+    read -r DOMAIN; DOMAIN="${DOMAIN:-$GUESS_DOMAIN}"
+    [ -n "$NAME" ] && [ -n "$DOMAIN" ] || { echo "init: both are required — re-run: knowledge.sh init" >&2; exit 1; }
     cat > "$CONF" <<EOF
 USER_NAME="${NAME}"
 ORG_DOMAIN="${DOMAIN}"
