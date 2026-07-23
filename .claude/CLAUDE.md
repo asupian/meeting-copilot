@@ -34,13 +34,17 @@ Read first: [README.md](../README.md) (operations), [HOW-IT-WORKS.md](../HOW-IT-
 
 ```
 copilot    the front door CLI: pure router to the journey modules + config
+AGENTS.md  install/operate instructions for AI agents pointed at the repo
 onboarding/ prep/ live/   the three journey modules: one thin script + README each
-cli/       events.mjs (calendar picker helpers) + common.sh (shared plumbing)
+cli/       events.mjs (calendar helpers), common.sh (shared plumbing), doctor.sh
 capture/   Swift: meetingtap (audio->transcript), screentap (window OCR), TCC bundles
-brain/     Node: live.mjs (server), contracts, matcher, recall, ambient, origins
+brain/     Node: live.mjs (check loop) + server.mjs (HTTP/SSE) + feedback.mjs
+           (vote lifecycle) + lib.mjs (buildCheckUser shared with brain-loop),
+           contracts, matcher, recall, ambient, origins
 panel/     floating NSPanel + index.html (the whole UI)
 portable/  knowledge layer: format spec, intake wizard, import/sync/pack prompts
-test/      replay-gate.sh + fixtures (the one place .jsonl is committed)
+test/      replay-gate.sh + trigger-checks.sh (model-cost) · live-checks.sh +
+           unit.sh + shim/claude (deterministic, zero-cost) · fixtures
 ```
 
 ## Runtime facts
@@ -80,6 +84,15 @@ test/      replay-gate.sh + fixtures (the one place .jsonl is committed)
   integrations runs in an interactive session (see portable/README.md).
 - `.gitignore` ignores `*.jsonl` EXCEPT `test/fixtures/**` — the replay gate
   depends on that exception.
+- Prompt assembly is SHARED (lib.mjs buildCheckUser) between live.mjs and
+  brain-loop.mjs — never let them diverge again (a replay-only elapsed-% hint
+  once made fixtures easier than live). Live gets % from the pack's
+  "Scheduled: N minutes" line; replay from the fixture span.
+- live.mjs writes trace.jsonl per check (prompt + raw + verdict) — the only
+  way a bad live card is reconstructible; deleted with the transcript unless
+  --keep-session. A dead model call broadcasts brainDown (never fake silence).
+- test/live-checks.sh + test/unit.sh are the zero-cost regression net (claude
+  shimmed via test/shim/claude); run them for live.mjs/panel/lib changes.
 - Never replay fixtures by appending them to live.mjs's transcript: the
   elapsed clock anchors to the fixture's old timestamps and the model judges
   a 32-hour meeting. brain-loop.mjs / review-server.mjs are the replay paths;
