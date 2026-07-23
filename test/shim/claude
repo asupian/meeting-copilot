@@ -1,0 +1,35 @@
+#!/bin/bash
+# A fake `claude` for deterministic brain tests: put this directory FIRST on
+# PATH and live.mjs/brain-loop.mjs run against it — zero model calls, instant
+# responses, full prompt capture. Used by test/live-checks.sh.
+#
+# Env contract:
+#   PROMPT_CAPTURE=<stem>   REQUIRED. Each call appends its stdin (the user
+#                           prompt) to <stem>.user.<n> (n auto-increments).
+#   SHIM_CARD_TYPE=<type>   card `type` emitted (default: collision).
+#   SHIM_DEAD=1             emit nothing and exit 0 — simulates a dead model
+#                           (auth expiry / network) for brainDown testing.
+#
+# Behavior: ambient-extraction calls (system prompt contains "ambient
+# listener") get a canned extraction with one unanswered question; everything
+# else gets a canned card. Output is stream-json shaped for lib.mjs streamBrain.
+SYS=""; prev=""
+for a in "$@"; do
+  if [ "$prev" = "--system-prompt" ]; then SYS="$a"; break; fi
+  prev="$a"
+done
+n=$(ls "${PROMPT_CAPTURE:?set PROMPT_CAPTURE}".user.* 2>/dev/null | wc -l | tr -d ' '); n=$((n+1))
+cat > "$PROMPT_CAPTURE.user.$n"
+[ -n "${SHIM_DEAD:-}" ] && exit 0
+case "$SYS" in
+  *"ambient listener"*)
+    node -e 'const j={commitments:[],questions:[{text:"What is the margin impact of the new pricing?",asked_by:"the user"}],answered_ids:[]};console.log(JSON.stringify({type:"stream_event",event:{type:"content_block_delta",delta:{text:JSON.stringify(j)}}}));'
+    ;;
+  *)
+    N="$n" node -e '
+const t = process.env.SHIM_CARD_TYPE || "collision";
+const j = {action:"card",question:`Deterministic Q ${process.env.N} on the SOW number?`,type:t,why:"test",
+  source:"Rivertech SOW quote — $42,500 fixed",now:{topic:"pricing",speakers:[],bearing:"neutral",note:""},summary:"rolling"};
+console.log(JSON.stringify({type:"stream_event",event:{type:"content_block_delta",delta:{text:JSON.stringify(j)}}}));'
+    ;;
+esac

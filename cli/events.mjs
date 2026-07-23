@@ -18,6 +18,9 @@ import { basename, join } from "node:path";
 
 const [cmd, ...args] = process.argv.slice(2);
 
+// `list | head` (or grep -q) closes stdout early — that's fine, not a crash.
+process.stdout.on("error", (e) => { if (e.code === "EPIPE") process.exit(0); throw e; });
+
 const slug = (title) =>
   String(title || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "meeting";
 

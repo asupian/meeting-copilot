@@ -27,7 +27,8 @@ ARGS=()
 for a in "$@"; do case "$a" in --no-screen) SCREEN=0 ;; *) ARGS+=("$a") ;; esac; done
 set -- ${ARGS[@]+"${ARGS[@]}"}
 
-SESSION_DIR="${HOME}/.meeting-copilot/sessions/$(date +%Y-%m-%d-%H%M%S)"
+# start.sh pre-creates the dir (so its logs land there too) and hands it down.
+SESSION_DIR="${COPILOT_SESSION_DIR:-${HOME}/.meeting-copilot/sessions/$(date +%Y-%m-%d-%H%M%S)}"
 mkdir -p "$SESSION_DIR"
 TRANSCRIPT="$SESSION_DIR/transcript.jsonl"
 touch "$TRANSCRIPT"

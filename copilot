@@ -5,6 +5,7 @@
 #   copilot prep [list | <n> | --pick | show [name]]    pick a meeting, build + view prep packs
 #   copilot live [name] [flags]                         run the copilot for a meeting
 #   copilot config [list | get KEY | set KEY VALUE]     defaults in ~/.meeting-copilot/config
+#   copilot doctor                                      read-only health sweep (deps, build, knowledge)
 #
 # A pure router: each journey lives in its own directory (onboarding/, prep/,
 # live/) as a thin script over the engines (setup.sh, portable/, start.sh —
@@ -48,5 +49,6 @@ case "${1:-help}" in
   prep)    shift; exec "$DIR/prep/prep.sh" "$@" ;;
   live)    shift; exec "$DIR/live/live.sh" "$@" ;;
   config)  shift; config_cmd "$@" ;;
+  doctor)  exec "$DIR/cli/doctor.sh" ;;
   *)       usage ;;
 esac

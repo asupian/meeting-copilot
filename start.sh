@@ -25,6 +25,12 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# One session dir for everything this meeting produces — including the logs,
+# so debugging one meeting never means hunting through /tmp.
+SESSION_DIR="${HOME}/.meeting-copilot/sessions/$(date +%Y-%m-%d-%H%M%S)"
+mkdir -p "$SESSION_DIR"
+export COPILOT_SESSION_DIR="$SESSION_DIR"
+
 # One instance at a time: clear any stragglers so ports/permissions are clean.
 pkill -x CardPanel 2>/dev/null; pkill -f 'brain/live.mjs' 2>/dev/null; pkill -x meetingtap 2>/dev/null; pkill -x screentap 2>/dev/null
 lsof -ti:8787 2>/dev/null | xargs kill 2>/dev/null
@@ -70,7 +76,7 @@ case "$extra" in
        # Embeddings feed the semantic (vec) channel. Incremental runs are seconds,
        # but never block the meeting on it: background it and let vec sharpen as
        # it lands. Until then vec quietly serves the previous vectors.
-       nohup qmd embed >/tmp/copilot-qmd-embed.log 2>&1 &
+       nohup qmd embed >"$SESSION_DIR/qmd-embed.log" 2>&1 &
      fi ;;
 esac
 
@@ -96,7 +102,7 @@ cleanup() {
 trap cleanup INT TERM
 
 # 1) capture: mic + system audio -> transcript.jsonl; screen OCR -> screen.jsonl
-"$DIR/run.sh" ${RUN_ARGS[@]+"${RUN_ARGS[@]}"} >/tmp/copilot-capture.log 2>&1 &
+"$DIR/run.sh" ${RUN_ARGS[@]+"${RUN_ARGS[@]}"} >"$SESSION_DIR/capture.log" 2>&1 &
 # wait for the transcript symlink to appear
 for _ in $(seq 1 20); do [ -e "${HOME}/.meeting-copilot/current/transcript.jsonl" ] && break; sleep 0.25; done
 
@@ -107,9 +113,9 @@ LIVE_PID=$!
 for _ in $(seq 1 20); do curl -s -o /dev/null "http://127.0.0.1:8787/" && break; sleep 0.25; done
 
 # 3) the floating panel (top-right; drag the top strip to move it)
-"$DIR/panel/CardPanel" "http://127.0.0.1:8787" >/tmp/copilot-panel.log 2>&1 &
+"$DIR/panel/CardPanel" "http://127.0.0.1:8787" >"$SESSION_DIR/panel.log" 2>&1 &
 
-echo "start: running. Panel is top-right. Ctrl-C here to stop and get the digest." >&2
+echo "start: running. Panel is top-right. Logs -> $SESSION_DIR. Ctrl-C here to stop and get the digest." >&2
 # A sleep-loop is reliably interrupted by the INT trap on every bash; `wait` is
 # not, in some non-interactive contexts.
 while kill -0 "$LIVE_PID" 2>/dev/null; do sleep 1; done
