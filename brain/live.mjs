@@ -21,17 +21,18 @@
 //
 // Usage: node brain/live.mjs [--transcript f] [--prep f] [--port 8787]
 
-import { createServer } from "node:http";
 import { execFile } from "node:child_process";
-import { readFileSync, readdirSync, existsSync, watch, appendFileSync, statSync, writeFileSync, unlinkSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, watch, appendFileSync, statSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadSystem, streamBrain, partialString, asrCaveat, CONFIG, USER_NAME, CARD_TYPES } from "./lib.mjs";
+import { loadSystem, streamBrain, partialString, buildCheckUser, CONFIG, USER_NAME, CARD_TYPES } from "./lib.mjs";
 import { parseFacts, matchGuard, matchWindow } from "./matcher.mjs";
 import { makeAmbient, finishAmbient } from "./ambient.mjs";
 import { makeRecall } from "./recall.mjs";
 import { resolveOrigin, loadSheetMap } from "./origins.mjs";
+import { makeFeedback } from "./feedback.mjs";
+import { makePanelServer } from "./server.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -62,6 +63,14 @@ const MODEL = val("--model", null);
 // its cross-referencing explicitly (see experimental/contract-fast.md).
 const THINK = argv.includes("--think") ? Number(val("--think", 0)) : null;
 const FEEDBACK = join(CURRENT, "feedback.jsonl");
+// Per-check trace: prompt in, raw out, verdict — the only way a bad LIVE card
+// is reconstructible (brain-loop has --trace; this is its always-on twin).
+// Rides with the session; the ephemeral cleanup deletes it with the
+// transcript unless --keep-session.
+const TRACE = join(dirname(TRANSCRIPT), "trace.jsonl");
+function traceCheck(entry) {
+  try { appendFileSync(TRACE, JSON.stringify({ t: new Date().toISOString(), ...entry }) + "\n"); } catch {}
+}
 // Cross-meeting feedback memory: a compact vote log surviving sessions.
 // Consumed as a prompt seed only — never the mechanical gap — so a string of
 // bad meetings can't mute a good one.
@@ -154,6 +163,12 @@ const FACTS = parseFacts(PREP_TEXT);
 const extLine = (PREP_TEXT.match(/^External attendees:\s*(.+)$/im) || [, ""])[1].trim();
 const EXTERNALS = has("--externals") || (extLine !== "" && !/^none\b/i.test(extLine));
 const MEETING_TITLE = (PREP_TEXT.match(/^# Prep Pack — (.+?) —/m) || [, "meeting"])[1];
+// "Scheduled: 30 minutes" in the pack header feeds the elapsed-% hint the
+// goal-late trigger leans on; packs without the line just omit the hint.
+const SCHEDULED_SEC = (() => {
+  const m = PREP_TEXT.match(/^Scheduled:\s*(\d+)\s*min/mi);
+  return m ? Number(m[1]) * 60 : null;
+})();
 const ambient = AMBIENT_ON ? makeAmbient({
   model: MODEL,
   getVisibleNames: () => screenNames,
@@ -188,12 +203,52 @@ const recall = RECALL_ON ? makeRecall({
   onStrong: (f) => { console.error(`recall: strong hit -> ${f.short} (${f.score}%)`); scheduleCheck(0); },
 }) : null;
 
-// ---------- SSE clients ----------
-const clients = new Set();
-function broadcast(obj) {
-  const payload = `data: ${JSON.stringify(obj)}\n\n`;
-  for (const res of clients) { try { res.write(payload); } catch {} }
-}
+// ---------- panel transport ----------
+// server.mjs owns HTTP/SSE mechanics; everything meeting-shaped stays here.
+// The callbacks close over state declared below — they only run once the
+// server is listening, well after module evaluation.
+const { server, broadcast } = makePanelServer({
+  port: PORT,
+  panelPath: join(HERE, "..", "panel", "index.html"),
+  // What a freshly connected panel needs to catch up on.
+  snapshot: () => {
+    const evs = [{ type: "mode", mode: MODE }];
+    for (const l of txRing) evs.push({ type: "transcript", ch: l.ch, who: l.who, text: l.text });
+    if (lastTopicLabels.length) evs.push({ type: "topics", labels: lastTopicLabels });
+    if (recall && recall.sources().length) evs.push({ type: "recall", sources: recall.sources() });
+    if (screenOff) evs.push({ type: "screen", off: true, reason: screenOffReason });
+    else if (screenAtMs && Date.now() - screenAtMs < 90_000)
+      evs.push({ type: "screen", text: screenGistNow, names: screenNames, speaker: screenSpeaker });
+    if (lastNow) evs.push({ type: "now", ...lastNow });
+    if (talking) evs.push({ type: "talk", on: true });
+    return evs;
+  },
+  onTalk: (j) => setTalking(String(j?.state || "").toLowerCase() === "down"),
+  // Open a cited source. Two whitelisted shapes, nothing else:
+  //   {p} — "PREP" or a repo-relative .md that resolves inside the knowledge
+  //         root ("../..", absolute, non-md all rejected).
+  //   {u} — an https URL (the fact's original artifact); no other scheme
+  //         reaches `open`.
+  onOpen: (j) => {
+    let target = null;
+    try {
+      const { p, u } = j || {};
+      if (u != null) {
+        if (/^https:\/\/[^\s]+$/.test(String(u))) target = String(u);
+      } else if (String(p || "") === "PREP") target = PREP;
+      else {
+        const abs = resolve(KNOWLEDGE_ROOT, String(p || "").replace(/:\d+$/, ""));   // strip :line
+        if (abs.startsWith(resolve(KNOWLEDGE_ROOT) + "/") && abs.endsWith(".md") && existsSync(abs)) target = abs;
+      }
+    } catch {}
+    if (target) { execFile("open", [target]); return true; }
+    return false;
+  },
+  onFeedback: (j) => {
+    const r = fb.vote(j || {});
+    if (r) console.error(`feedback: ${j.vote} on ${j.cardId}${r.known ? "" : " (unknown id — logged, not consumed)"}`);
+  },
+});
 
 // ---------- meeting state ----------
 let consumed = 0;              // transcript lines already sent to the brain
@@ -207,12 +262,13 @@ let adoptedSlides = "";        // pinned slide-summary wording for the current s
 let adoptedSlidesAt = 0;
 const surfaced = [];
 const cardTimes = [];
-const cardById = new Map();    // id -> question, so feedback can name what was voted on
-const votes = new Map();       // cardId -> {vote, atMs}; latest vote per card wins
+// Votes in, tighten-only signals out, cross-meeting memory — see feedback.mjs.
+const fb = makeFeedback({ userName: USER_NAME, logPath: FEEDBACK, historyPath: FEEDBACK_HISTORY });
 let startEpoch = null;
 let debounceTimer = null;
 let screenKick = false;        // a slide flip may run a check without new speech
 let lastCheckDoneAt = 0;
+let brainFailures = 0;         // consecutive dead model calls (panel shows brainDown)
 
 // ---------- capture health ----------
 // "listening" must mean "audio is actually flowing", not "SSE is connected".
@@ -255,61 +311,6 @@ function elapsedSec() {
   return Math.round((Date.now() - startEpoch) / 1000);
 }
 
-// ---------- feedback consumers ----------
-// Feedback only ever TIGHTENS. Both consumers are exact no-ops with zero votes
-// (block absent, gap 0), which is what keeps a feedback-free run — including
-// the replay gate — byte-identical to a build without them.
-function feedbackGap() {
-  // Extra seconds of min-gap from recent negative votes. Upvotes only offset
-  // negatives; they never lower the gap below --min-gap and never touch --cap.
-  const now = Date.now();
-  let net = 0;
-  for (const { vote, atMs } of votes.values()) {
-    if (now - atMs > 10 * 60_000) continue;              // 10-min recency window
-    net += vote === "down" ? 1 : vote === "dismiss" ? 0.5 : -1;
-  }
-  return net >= 4 ? 180 : net >= 2 ? 90 : 0;
-}
-
-// Negative votes from PAST meetings (30-day window, last 10): they seed the
-// prompt's bar from check one, but never touch the mechanical gap — history
-// makes the copilot choosier, not mute. Missing/empty file -> [] -> no-op.
-const pastNegatives = (() => {
-  try {
-    const cutoff = Date.now() - 30 * 86_400_000;
-    return readFileSync(FEEDBACK_HISTORY, "utf8").split("\n").filter(Boolean)
-      .map((l) => { try { return JSON.parse(l); } catch { return null; } })
-      .filter((e) => e && (e.vote === "down" || e.vote === "dismiss") && e.question && Date.parse(e.at) > cutoff)
-      .slice(-10);
-  } catch { return []; }
-})();
-
-function feedbackBlock() {
-  // Conditional block, not a contract line: same reasoning as asrCaveat — a
-  // rule that only appears when relevant stays salient. Quotes only questions
-  // the model itself wrote (newline-stripped, capped), so no user free text
-  // reaches the prompt.
-  if (!votes.size && !pastNegatives.length) return "";
-  const clip = (s) => String(s).replace(/\s+/g, " ").slice(0, 120);
-  const q = (id) => clip(cardById.get(id)?.question || "");
-  const listOf = (v) => [...votes].filter(([, x]) => x.vote === v).map(([id]) => `- "${q(id)}"`);
-  const down = listOf("down").slice(-5), dis = listOf("dismiss").slice(-5), up = listOf("up").slice(-3);
-  const past = pastNegatives.map((e) => `- "${clip(e.question)}"`);
-  return [
-    `FEEDBACK ON EARLIER CARDS (${USER_NAME}'s votes on cards from this and past meetings):`,
-    ...(down.length ? [`Downvoted — not worth the interruption:`, ...down] : []),
-    ...(dis.length ? [`Dismissed (weak negative):`, ...dis] : []),
-    ...(up.length ? [`Upvoted — the bar was right here:`, ...up] : []),
-    ...(past.length ? [`Downvoted or dismissed in PAST meetings (recent):`, ...past] : []),
-    `Read this as one-directional calibration of your bar: a new candidate that`,
-    `resembles a downvoted or dismissed card (same fact, same angle, same kind of`,
-    `trigger) must clear a HIGHER bar — surface it only if clearly stronger (a`,
-    `harder trigger, a fresher fact, a live collision); when in doubt, stay silent.`,
-    `Upvotes are NOT a request for more cards or looser grounding. Feedback never`,
-    `lowers the bar: every card still cites a held fact, and silence stays correct.`,
-  ].join("\n");
-}
-
 function droppedBlock() {
   // The one gap mode anchored on the meeting itself: questions the room let
   // drop. Only ambient tracks them; none open (or --no-ambient) is an exact
@@ -333,10 +334,6 @@ function buildUser(lines) {
   const delta = lines.length
     ? lines.map((l) => `${l.who === USER_NAME ? USER_NAME : "Them"}: ${l.text}`).join("\n")
     : "(no new speech — the shared screen changed)";
-  const shown = surfaced.length ? surfaced.map((c, i) => `${i + 1}. ${c.question}`).join("\n") : "(none yet)";
-  const fbBlock = feedbackBlock();
-  const dropBlock = droppedBlock();
-  const recallBlock = recall ? recall.render() : "";
   // What's visible on the shared screen right now (fresh within ~90s). OCR'd
   // on-device; only the text reaches this prompt.
   const screenFresh = screenAtMs && Date.now() - screenAtMs < 90_000;
@@ -345,24 +342,15 @@ function buildUser(lines) {
       (screenNames.length ? `\nParticipant names visible on screen: ${screenNames.join(", ")} (these people are in the meeting)` : "") +
       (chartRead && chartReadAtMs === screenAtMs ? `\nChart read (vision pass over the slide image): ${chartRead}` : "")
     : "";
-  return [
-    `Meeting elapsed: ~${Math.round(elapsedSec() / 60)} min.`,
-    ``,
-    `Rolling summary so far:\n${rollingSummary}`,
-    ``,
-    `Cards already shown to ${USER_NAME} (do NOT repeat these or minor variants):\n${shown}`,
-    ...(fbBlock ? [``, fbBlock] : []),
-    ``,
-    `New transcript since last check:\n${delta}${asrCaveat(delta)}`,
-    ...(screenBlock ? [``, screenBlock] : []),
-    ...(recallBlock ? [``, recallBlock] : []),
-    ...(dropBlock ? [``, dropBlock] : []),
-    ``,
-    `Decide: stay silent, or surface ONE grounded card. Always return the \`now\` object (current topic, confirmed speakers, goal bearing) and an updated one-paragraph rolling summary.`,
-    ``,
-    // Without extended thinking the model drifts to prose; this holds it to JSON.
-    `Respond with ONLY the JSON object. Begin your reply with { and end with }. No prose before or after, no markdown fences.`,
-  ].join("\n");
+  return buildCheckUser({
+    elapsedSec: elapsedSec(),
+    scheduledSec: SCHEDULED_SEC,
+    summary: rollingSummary,
+    shownCards: surfaced,
+    delta,
+    preBlocks: [fb.block()],
+    postBlocks: [screenBlock, recall ? recall.render() : "", droppedBlock()],
+  });
 }
 
 let cardSeq = 0;
@@ -382,7 +370,7 @@ async function check() {
   const nowPre = elapsedSec();
   const lastPre = cardTimes.length ? cardTimes[cardTimes.length - 1] : -Infinity;
   // Recent negative feedback widens the effective gap (never narrows it).
-  const gapSec = Math.max(MIN_GAP_SEC, feedbackGap());
+  const gapSec = Math.max(MIN_GAP_SEC, fb.gap());
   const withinGap = nowPre - lastPre < gapSec;
   const atCap = cardTimes.filter((t) => nowPre - t <= 30 * 60).length >= CAP;
   const canShow = !withinGap && !atCap;
@@ -392,9 +380,10 @@ async function check() {
   let lastQ = "";
   let lastTopicPartial = "";
 
-  const { json: parsed, raw, firstTokenMs, totalMs } = await streamBrain({
+  const userPrompt = buildUser(lines);
+  const { json: parsed, raw, failed, firstTokenMs, totalMs } = await streamBrain({
     system: SYSTEM,
-    user: buildUser(lines),
+    user: userPrompt,
     model: MODEL,
     thinkTokens: THINK,
     onDelta: (acc) => {
@@ -411,6 +400,19 @@ async function check() {
 
   inFlight = false;
   lastCheckDoneAt = Date.now();
+
+  // A dead model must never look like a quiet meeting: surface it on the
+  // panel, put the unseen lines back for the next attempt, and don't emit a
+  // fake "silent".
+  if (failed) {
+    brainFailures++;
+    console.error(`brain: model call FAILED — nothing returned (check \`claude\` login / network); ${brainFailures} consecutive`);
+    broadcast({ type: "brainDown", count: brainFailures });
+    traceCheck({ atSec: nowPre, canShow, failed: true, userPrompt });
+    pending = lines.concat(pending);
+    return;
+  }
+  brainFailures = 0;
 
   // A question the user WATCHED STREAM IN must not silently vanish because the
   // full JSON failed to parse. Salvage the card's flat fields from the raw
@@ -431,6 +433,8 @@ async function check() {
     }
     console.error(`brain: JSON parse failed (${raw.length} chars) — ${json ? "salvaged card from stream" : "no card fields, dropping"}; tail: ...${raw.slice(-140).replace(/\n/g, " ")}`);
   }
+
+  traceCheck({ atSec: nowPre, canShow, userPrompt, raw, action: json?.action ?? null, question: json?.question, type: json?.type });
 
   if (json?.summary) rollingSummary = json.summary;
   // Live readout: current topic, confirmed speakers, goal bearing. Arrives with
@@ -494,7 +498,7 @@ async function check() {
         totalMs,
       };
       surfaced.push({ question: card.question });
-      cardById.set(card.id, { question: card.question, type: cardType });
+      fb.noteCard(card.id, card.question, cardType);
       cardTimes.push(now);
       broadcast(card);
       const rule = "─".repeat(58);
@@ -780,100 +784,10 @@ else console.error(`live: waiting for ${TRANSCRIPT} to appear...`);
 // fs.watch misses some appends on macOS; a slow safety poll catches stragglers.
 setInterval(() => { if (existsSync(TRANSCRIPT)) onTranscriptChange(); }, 2000);
 
-// ---------- HTTP + SSE ----------
-const panelHtml = () => readFileSync(join(HERE, "..", "panel", "index.html"), "utf8");
-
-const server = createServer((req, res) => {
-  if (req.method === "GET" && (req.url === "/" || req.url.startsWith("/index.html"))) {
-    res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    res.end(panelHtml());
-    return;
-  }
-  if (req.method === "GET" && req.url === "/events") {
-    res.writeHead(200, {
-      "content-type": "text/event-stream",
-      "cache-control": "no-cache",
-      connection: "keep-alive",
-    });
-    res.write(": connected\n\n");
-    res.write(`data: ${JSON.stringify({ type: "mode", mode: MODE })}\n\n`);
-    for (const l of txRing) res.write(`data: ${JSON.stringify({ type: "transcript", ch: l.ch, who: l.who, text: l.text })}\n\n`);
-    if (lastTopicLabels.length) res.write(`data: ${JSON.stringify({ type: "topics", labels: lastTopicLabels })}\n\n`);
-    if (recall && recall.sources().length) res.write(`data: ${JSON.stringify({ type: "recall", sources: recall.sources() })}\n\n`);
-    if (screenOff) res.write(`data: ${JSON.stringify({ type: "screen", off: true, reason: screenOffReason })}\n\n`);
-    else if (screenAtMs && Date.now() - screenAtMs < 90_000)
-      res.write(`data: ${JSON.stringify({ type: "screen", text: screenGistNow, names: screenNames, speaker: screenSpeaker })}\n\n`);
-    if (lastNow) res.write(`data: ${JSON.stringify({ type: "now", ...lastNow })}\n\n`);
-    if (talking) res.write(`data: ${JSON.stringify({ type: "talk", on: true })}\n\n`);
-    clients.add(res);
-    req.on("close", () => clients.delete(res));
-    return;
-  }
-  if (req.method === "POST" && req.url === "/talk") {
-    let body = "";
-    req.on("data", (d) => (body += d));
-    req.on("end", () => {
-      let state = "";
-      try { state = String(JSON.parse(body).state || "").toLowerCase(); } catch {}
-      setTalking(state === "down");
-      res.writeHead(204).end();
-    });
-    return;
-  }
-  // Open a cited source. Two whitelisted shapes, nothing else:
-  //   {p} — "PREP" or a repo-relative .md that resolves inside the repo, opened
-  //         in the editor ("../..", absolute, non-md all rejected).
-  //   {u} — an https URL (the fact's original artifact: doc/sheet/email/slack),
-  //         opened in the browser. https only; no other scheme reaches `open`.
-  if (req.method === "POST" && req.url === "/open") {
-    let body = "";
-    req.on("data", (d) => (body += d));
-    req.on("end", () => {
-      let target = null;
-      try {
-        const { p, u } = JSON.parse(body);
-        if (u != null) {
-          if (/^https:\/\/[^\s]+$/.test(String(u))) target = String(u);
-        } else if (String(p || "") === "PREP") target = PREP;
-        else {
-          const abs = resolve(KNOWLEDGE_ROOT, String(p || "").replace(/:\d+$/, ""));   // strip :line
-          if (abs.startsWith(resolve(KNOWLEDGE_ROOT) + "/") && abs.endsWith(".md") && existsSync(abs)) target = abs;
-        }
-      } catch {}
-      if (target) { execFile("open", [target]); res.writeHead(204).end(); }
-      else res.writeHead(404).end();
-    });
-    return;
-  }
-  if (req.method === "POST" && req.url === "/feedback") {
-    let body = "";
-    req.on("data", (d) => (body += d));
-    req.on("end", () => {
-      try {
-        const fb = JSON.parse(body);
-        if (typeof fb.cardId === "string" && ["up", "down", "dismiss"].includes(fb.vote)) {
-          appendFileSync(FEEDBACK, JSON.stringify({ ...fb, at: new Date().toISOString() }) + "\n");
-          // Only cards this session actually surfaced modulate behavior; a
-          // stale id (panel reloaded against a restarted server) is logged only.
-          if (cardById.has(fb.cardId)) votes.set(fb.cardId, { vote: fb.vote, atMs: Date.now() });
-          console.error(`feedback: ${fb.vote} on ${fb.cardId}${cardById.has(fb.cardId) ? "" : " (unknown id — logged, not consumed)"}`);
-        }
-      } catch {}
-      res.writeHead(204).end();
-    });
-    return;
-  }
-  res.writeHead(404).end();
-});
-server.on("error", (e) => {
-  if (e.code === "EADDRINUSE") {
-    console.error(`live: port ${PORT} already in use. Another copilot is running — kill it (lsof -ti:${PORT} | xargs kill) or pass --port.`);
-    process.exit(1);
-  }
-  throw e;
-});
+// ---------- start serving ----------
 server.listen(PORT, "127.0.0.1", () => {
   console.error(`live: panel http://127.0.0.1:${PORT}`);
+  traceCheck({ session: MEETING_TITLE, system: SYSTEM });   // once: makes any later card fully reconstructible
   console.error(`live: watching ${TRANSCRIPT}`);
   console.error(`live: debounce ${DEBOUNCE_MS}ms, max-wait ${MAX_WAIT_MS / 1000}s, cap ${CAP}/30min${AMBIENT_ON ? ", ambient on" : ""}`);
   console.error(`live: mic mode ${MODE}${MODE === "ptt" ? " -- hold the panel's \"talk\" button while you speak (mic is otherwise dropped as speaker echo)" : ""}`);
@@ -883,7 +797,7 @@ server.listen(PORT, "127.0.0.1", () => {
     const days = Math.floor((Date.now() - Date.parse(CONFIG.KNOWLEDGE_SYNCED_AT)) / 86_400_000);
     if (days > 7) console.error(`live: WARNING — knowledge last synced ${days} days ago; cards cite what's on file (refresh: copilot prep <n> --refresh)`);
   }
-  if (pastNegatives.length) console.error(`live: feedback history seeded (${pastNegatives.length} past negative(s) raise the bar)`);
+  if (fb.seeded) console.error(`live: feedback history seeded (${fb.seeded} past negative(s) raise the bar)`);
 });
 
 // Ambient extraction runs on its own clock; flush() itself decides if enough
@@ -929,31 +843,21 @@ async function shutdown() {
       for (const f of files) console.error(`live: staging -> ${f}`);
       await new Promise((r) => setTimeout(r, 400));   // let the SSE digest land
     }
-    // Persist this session's votes so the next meeting starts with the bar
-    // already calibrated (consumed via pastNegatives at startup). Capped so
-    // the file can't grow into a shadow archive.
-    try {
-      if (votes.size) {
-        const at = new Date().toISOString();
-        const lines = [...votes].map(([id, v]) =>
-          JSON.stringify({ at, title: MEETING_TITLE, vote: v.vote,
-                           question: cardById.get(id)?.question || "", type: cardById.get(id)?.type }));
-        appendFileSync(FEEDBACK_HISTORY, lines.join("\n") + "\n");
-        const all = readFileSync(FEEDBACK_HISTORY, "utf8").split("\n").filter(Boolean);
-        if (all.length > 200) writeFileSync(FEEDBACK_HISTORY, all.slice(-200).join("\n") + "\n");
-        console.error(`live: feedback history +${lines.length} -> ${FEEDBACK_HISTORY}`);
-      }
-    } catch {}
+    // Session votes -> cross-meeting memory (see feedback.mjs persist).
+    const persisted = fb.persist(MEETING_TITLE);
+    if (persisted) console.error(`live: feedback history +${persisted} -> ${FEEDBACK_HISTORY}`);
     // No transcription retention: the digest is the meeting's record; the
     // transcript and screen feeds were working files. Delete ONLY the session
     // defaults — an explicitly passed --transcript/--screen-file path is a
     // fixture or replay input, never ours to delete.
     if (!KEEP_SESSION) {
       let removed = 0;
-      for (const [p, name] of [[TRANSCRIPT, "transcript.jsonl"], [SCREEN_FILE, "screen.jsonl"]]) {
+      for (const [p, name] of [[TRANSCRIPT, "transcript.jsonl"], [SCREEN_FILE, "screen.jsonl"], [TRACE, "trace.jsonl"]]) {
         if (p === join(CURRENT, name)) { try { unlinkSync(p); removed++; } catch {} }
       }
       try { unlinkSync(join(CURRENT, "frame.png")); removed++; } catch {}
+      // capture.log holds run.sh's transcript tail — it's transcription too.
+      try { unlinkSync(join(CURRENT, "capture.log")); removed++; } catch {}
       if (removed) console.error("live: transcript/screen feed deleted — no transcription retained (--keep-session to keep, e.g. for review-server or fixture-making)");
     }
   } finally { process.exit(0); }

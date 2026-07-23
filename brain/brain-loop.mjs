@@ -28,7 +28,7 @@ import { readFileSync, existsSync, appendFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadSystem, streamBrain, asrCaveat, renderTemplate, USER_NAME } from "./lib.mjs";
+import { loadSystem, streamBrain, buildCheckUser, renderTemplate, USER_NAME } from "./lib.mjs";
 import { parseFacts, matchWindow, matchGuard } from "./matcher.mjs";
 import { makeAmbient, finishAmbient } from "./ambient.mjs";
 
@@ -121,28 +121,19 @@ function windowOfCards(nowSec, spanSec) {
 }
 
 function buildUserText(deltaLines, meetingElapsedSec, meetingTotalGuessSec) {
+  // Shared with live.mjs (lib.mjs buildCheckUser) so replay and live show the
+  // model the same prompt shape. Replay's scheduled length is the fixture's
+  // total span; live parses "Scheduled: N minutes" from the pack header.
   const delta = deltaLines
     .map((l) => `${l.ch === "me" ? USER_NAME : "Them"}: ${l.text}`)
     .join("\n");
-  const shown = surfaced.length
-    ? surfaced.map((c, i) => `${i + 1}. ${c.question}`).join("\n")
-    : "(none yet)";
-  const pct = meetingTotalGuessSec
-    ? Math.round((meetingElapsedSec / meetingTotalGuessSec) * 100)
-    : null;
-  return [
-    `Meeting elapsed: ~${Math.round(meetingElapsedSec / 60)} min${pct != null ? ` (~${pct}% if scheduled length holds)` : ""}.`,
-    ``,
-    `Rolling summary so far:\n${rollingSummary}`,
-    ``,
-    `Cards already shown to ${USER_NAME} (do NOT repeat these or minor variants):\n${shown}`,
-    ``,
-    `New transcript since last check:\n${delta}${asrCaveat(delta)}`,
-    ``,
-    `Decide: stay silent, or surface ONE grounded card. Also return an updated one-paragraph rolling summary.`,
-    ``,
-    `Respond with ONLY the JSON object. Begin your reply with { and end with }. No prose before or after, no markdown fences.`,
-  ].join("\n");
+  return buildCheckUser({
+    elapsedSec: meetingElapsedSec,
+    scheduledSec: meetingTotalGuessSec || null,
+    summary: rollingSummary,
+    shownCards: surfaced,
+    delta,
+  });
 }
 
 function emitCard(card, atSec) {

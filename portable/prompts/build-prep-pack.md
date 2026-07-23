@@ -109,6 +109,7 @@ descriptor on the source line -> omit; never invent one.
 # Prep Pack — {meeting title} — {date}
 Attendees: {name (role), ...}
 External attendees: {none | yes — list of non-{{ORG_DOMAIN}} attendees}
+Scheduled: {NN} minutes   <- from the event's start/end times; omit the line when unknown
 
 ## Attendees
 ### {Name} ({role or "role unknown"})

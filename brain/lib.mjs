@@ -11,6 +11,36 @@ import { join } from "node:path";
 // whitelists the model's `type` against this; the panel colors its chip by it.
 export const CARD_TYPES = ["collision", "gap", "reinforce"];
 
+// One check's user prompt, shared by live.mjs and brain-loop.mjs so replay
+// and live meetings show the model the SAME shape. A divergence here means
+// fixtures pass while live behaves differently — it happened once: replay
+// carried an elapsed-% hint (feeding the goal-late trigger) that live never
+// sent. preBlocks land after the shown-cards section (live: feedback);
+// postBlocks after the transcript delta (live: screen, recall, open
+// questions). Both drivers change together or not at all.
+export function buildCheckUser({ elapsedSec, scheduledSec = null, summary, shownCards, delta, preBlocks = [], postBlocks = [] }) {
+  const pct = scheduledSec ? Math.round((elapsedSec / scheduledSec) * 100) : null;
+  const shown = shownCards.length
+    ? shownCards.map((c, i) => `${i + 1}. ${c.question}`).join("\n")
+    : "(none yet)";
+  return [
+    `Meeting elapsed: ~${Math.round(elapsedSec / 60)} min${pct != null ? ` (~${pct}% if scheduled length holds)` : ""}.`,
+    ``,
+    `Rolling summary so far:\n${summary}`,
+    ``,
+    `Cards already shown to ${USER_NAME} (do NOT repeat these or minor variants):\n${shown}`,
+    ...preBlocks.flatMap((b) => (b ? [``, b] : [])),
+    ``,
+    `New transcript since last check:\n${delta}${asrCaveat(delta)}`,
+    ...postBlocks.flatMap((b) => (b ? [``, b] : [])),
+    ``,
+    `Decide: stay silent, or surface ONE grounded card. Always return the \`now\` object (current topic, confirmed speakers, goal bearing) and an updated one-paragraph rolling summary.`,
+    ``,
+    // Without extended thinking the model drifts to prose; this holds it to JSON.
+    `Respond with ONLY the JSON object. Begin your reply with { and end with }. No prose before or after, no markdown fences.`,
+  ].join("\n");
+}
+
 // ~/.meeting-copilot/config — KEY="VALUE" lines written by portable/knowledge.sh
 // (USER_NAME, ORG_DOMAIN, KNOWLEDGE_DIR). Missing file -> {}; callers default.
 export function loadConfig(path = join(homedir(), ".meeting-copilot", "config")) {
@@ -198,10 +228,14 @@ export function streamBrain({ system, user, model, onDelta, signal, thinkTokens,
       resolve({
         json: extractJson(acc),
         raw: acc,
+        // A real response always streams SOME text; nothing at all means the
+        // call itself died (auth expiry, network, spawn failure). Callers must
+        // surface this — a dead brain must never look like a quiet meeting.
+        failed: !acc.trim(),
         firstTokenMs,
         totalMs: Date.now() - t0,
       });
     });
-    child.on("error", () => resolve({ json: null, raw: "", firstTokenMs: null, totalMs: Date.now() - t0 }));
+    child.on("error", () => resolve({ json: null, raw: "", failed: true, firstTokenMs: null, totalMs: Date.now() - t0 }));
   });
 }
