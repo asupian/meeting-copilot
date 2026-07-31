@@ -9,8 +9,28 @@ copilot prep list         # upcoming meetings, numbered (12h window; PREP_LOOKAH
 copilot prep 2            # build the pack for meeting 2
 copilot prep --all        # packs for EVERY upcoming meeting (skips existing; onboarding runs this)
 copilot prep show [name]  # view the newest pack, or one matched by name
+copilot prep --text "..." # NO CALENDAR NEEDED — just describe the meeting
 copilot prep --pick       # no gws CLI? interactive fallback (claude session picks the meeting)
 ```
+
+## No calendar connected
+
+`--text` is the plain door, and for a new user it is the *primary* path, not a
+fallback — no calendar is the default state on day one.
+
+```bash
+copilot prep --text "1:1 with Dana — renewal, she wants a discount"
+copilot prep --text "Q3 planning"          # a bare title is enough
+pbpaste | copilot prep --text              # or pipe an invite in
+copilot prep --text                        # or just type it, Ctrl-D to finish
+```
+
+Any wording works — there is no format. The text reaches the pack builder as a
+free-text description; it extracts what is actually there (people, topic, time)
+and writes "none found" for the rest rather than guessing. The pack comes out
+thinner than a calendar-resolved one (no attendee emails means no reliable
+per-person history), so expect fewer cards. That is the system working, not
+failing.
 
 Packs are stored per meeting as `~/.meeting-copilot/prep/<date>[-HHMM]-<slug>.md`.
 The start time in the filename is how `copilot live` later matches a pack with

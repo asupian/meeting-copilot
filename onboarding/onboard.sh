@@ -7,6 +7,9 @@
 #                              packs prepped for every upcoming meeting
 #   onboard.sh replay <file>   the trial alone: transcribe a past meeting
 #                              recording, pack it from your KB, replay it
+#   onboard.sh integrations    what each optional piece (qmd, calendar, notes
+#                              source) unlocks, whether it's connected, how to
+#                              connect it. Read-only, installs nothing.
 #   onboard.sh knowledge       (re)run the knowledge wizard: ingest your KB,
 #                              channels as fallback; re-running tops up
 #   onboard.sh import <dir>    distill an existing notes folder (Obsidian, Notion export...)
@@ -53,6 +56,10 @@ case "${1:-}" in
       BUILD_PID=$!
       echo "capture binaries compiling in the background (log: $BUILD_LOG)" >&2
     fi
+    # Say what the optional pieces ARE before asking for anything. They used to
+    # be detected silently, so a user could finish onboarding never knowing live
+    # recall or the meeting list existed — which is the complaint this closes.
+    "$ROOT/onboarding/integrations.sh" || true
     # The main event: connect + ingest the knowledge base (wizard needs claude).
     if ! command -v claude >/dev/null 2>&1; then
       echo "claude CLI not found — running the build first; install claude, then: copilot onboard knowledge" >&2
@@ -80,13 +87,20 @@ case "${1:-}" in
       echo "" >&2
       echo "prepping your upcoming meetings from the new knowledge dir..." >&2
       "$ROOT/prep/prep.sh" --all ||
-        echo "(no calendar data — prep before each meeting: copilot prep --pick)" >&2
+        echo "(no calendar connected — prep each meeting by describing it: copilot prep --text \"...\")" >&2
     fi
+    # "MEETING-READY" used to be asserted, not checked. doctor is read-only and
+    # ~2s, and it is the difference between a user who knows what they're missing
+    # and one who finds out mid-meeting.
+    echo "" >&2
+    echo "final health check:" >&2
+    "$ROOT/cli/doctor.sh" || echo "(FAILures above must be fixed before a meeting — re-run: copilot doctor)" >&2
     echo "" >&2
     echo "MEETING-READY. At meeting time:  copilot live   (packs are already built; re-prep anytime: copilot prep list)" >&2
     ;;
   replay) shift; replay_recording "${1:?usage: onboard.sh replay <recording-file>}" ;;
   knowledge) exec "$ROOT/portable/knowledge.sh" setup ;;
+  integrations) exec "$ROOT/onboarding/integrations.sh" ;;
   import)    shift; exec "$ROOT/portable/knowledge.sh" import "$@" ;;
-  *) sed -n '3,12p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '3,15p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

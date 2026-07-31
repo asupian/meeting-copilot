@@ -116,6 +116,29 @@ else fail "dropped block never appeared"; fi
 grep -q "QUESTIONS STILL OPEN" "$CAP.user.1" && fail "dropped block appeared before any flush" || true
 stop_live
 
+# ── 6. hung model call -> timeout, and the brain KEEPS WORKING after ──
+# The regression: a `claude` that stalls instead of exiting left inFlight stuck
+# true forever, so the brain went silent for the rest of the meeting with no
+# error anywhere. Reported live as "it hung on me mid-meeting". The second half
+# of this check is the real assertion — recovery, not just the timeout firing.
+COPILOT_CALL_TIMEOUT_MS=4000 SHIM_HANG=1 start_live --no-ambient
+say_line "A beat the hung model will never answer."
+wait_for "$SANDBOX/live.log" "TIMED OUT" 24 && pass "hung model call is killed by the timeout" \
+  || fail "hung model call never timed out — the meeting-killing bug is back"
+# Same session, model now healthy: a stuck inFlight would eat this silently.
+kill "$LIVE" 2>/dev/null; wait "$LIVE" 2>/dev/null
+mkdir -p "$CUR"; rm -f "$CAP".user.*
+PROMPT_CAPTURE="$CAP" PATH="$DIR/shim:$PATH" node "$ROOT/brain/live.mjs" --port "$PORT" \
+  --no-recall --no-staging --headphones --no-ambient \
+  --prep "$ROOT/test/fixtures/rivertech/prep-pack.md" 2>> "$SANDBOX/live.log" &
+LIVE=$!
+sleep 1
+curl -s -N "http://127.0.0.1:$PORT/events" > "$SANDBOX/sse2.log" & SSE=$!
+say_line "A beat after the stall."
+wait_for "$SANDBOX/sse2.log" '"type":"card"' && pass "brain still answers after a timed-out call" \
+  || fail "brain never recovered from the hung call"
+stop_live
+
 echo "" >&2
 [ "$FAIL" = 0 ] && echo "LIVE CHECKS: all pass" >&2 || echo "LIVE CHECKS: FAILURES (see above)" >&2
 exit "$FAIL"

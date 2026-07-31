@@ -5,6 +5,9 @@
 #   prep.sh <n> [--refresh]     build the pack for meeting n (-> ~/.meeting-copilot/prep/);
 #                               --refresh syncs the last day from integrations first
 #   prep.sh --all               build packs for EVERY upcoming meeting (skips existing)
+#   prep.sh --text ["..."]      NO CALENDAR NEEDED: describe the meeting in your own
+#                               words. Any wording works — a title alone is enough.
+#                               Args, a pipe, or a prompt if you give neither.
 #   prep.sh --pick              no-gws fallback: interactive pack --next, then archive
 #   prep.sh show [name]         view the newest pack, or one matched by name
 #
@@ -18,7 +21,11 @@ source "$(cd "$(dirname "$0")" && pwd)/../cli/common.sh"
 
 fetch_events() { # events JSON for the lookahead window, or exit with the fallback hint
   "$ROOT/portable/knowledge.sh" events "$LOOKAHEAD" || {
-    echo "prep: interactive fallback: copilot prep --pick" >&2
+    # Lead with the no-calendar path. --pick opens an interactive claude session
+    # and was the only thing named here, which sent every gws-less user down the
+    # heaviest road for what is usually "I just want to type the meeting in".
+    echo "prep: no calendar. Type the meeting instead:  copilot prep --text \"1:1 with Dana — renewal pricing\"" >&2
+    echo "prep: (or pick it interactively:  copilot prep --pick)" >&2
     exit 1
   }
 }
@@ -56,6 +63,27 @@ merge_hint() {
   return 0
 }
 
+archive_pack() { # $1 = fallback title text (may be empty) — copy LEGACY_PACK into the per-meeting store
+  # The stem normally comes from the pack's own "# Prep Pack — <title> — <date>"
+  # header. That used to be the ONLY way in, with stderr thrown away, so a pack
+  # whose header came out any other way was silently never archived — the user
+  # saw "pack: wrote ..." and then found nothing under `prep show`. Fall back to
+  # a slug instead of dropping it on the floor.
+  local stem
+  [ -s "$LEGACY_PACK" ] || { echo "prep: no pack was written — nothing to archive" >&2; return 1; }
+  if ! stem="$(node "$ROOT/cli/events.mjs" pack-stem < "$LEGACY_PACK" 2>/dev/null)"; then
+    local slug
+    slug="$(printf '%s' "${1:-meeting}" | head -1 | tr '[:upper:]' '[:lower:]' \
+            | sed -e 's/[^a-z0-9]\{1,\}/-/g' -e 's/^-//' -e 's/-$//' | cut -c1-40)"
+    [ -n "$slug" ] || slug="meeting"
+    stem="$(date +%Y-%m-%d)-$slug"
+    echo "prep: pack has no '# Prep Pack — <title> — <date>' header; archiving as $stem" >&2
+  fi
+  mkdir -p "$PREP_DIR"
+  cp "$LEGACY_PACK" "$PREP_DIR/$stem.md"
+  echo "prep: archived -> $PREP_DIR/$stem.md" >&2
+}
+
 SUB="${1:-list}"
 case "$SUB" in
   list)
@@ -87,15 +115,36 @@ case "$SUB" in
     if [ -s "$PREP_DIR/$FIRST.md" ]; then cp "$PREP_DIR/$FIRST.md" "$LEGACY_PACK"; fi
     echo "prep: $BUILT pack(s) built, $((N - BUILT)) skipped/failed; copilot live picks by start time" >&2
     ;;
+  --text|--paste|--describe)
+    # No calendar, no format. The pack builder has always accepted a free-text
+    # meeting description (knowledge.sh pack --paste), but the only ways in were
+    # a calendar-shaped JSON pipe or an interactive claude session, so a user
+    # without gws hit "it required a specific format". This is the plain door:
+    # say what the meeting is however you like and a pack comes out.
+    shift
+    freshness_note; merge_hint
+    if [ "$#" -gt 0 ]; then
+      TEXT="$*"                       # copilot prep --text "1:1 with Dana" "renewal, pricing"
+    elif [ ! -t 0 ]; then
+      TEXT="$(cat)"                   # piped or heredoc'd
+    else
+      # Interactive: multi-line, ended with Ctrl-D. Deliberately says "any
+      # wording" — the old prompt listed "title, time, attendees+emails" and
+      # read like a required schema when it never was one.
+      echo "Describe the meeting in your own words — any wording, a title alone is fine." >&2
+      echo "(Useful if you have it: who's in it, what it's about. Ctrl-D when done.)" >&2
+      TEXT="$(cat)"
+    fi
+    [ -n "${TEXT//[[:space:]]/}" ] || { echo "prep: nothing to go on — give a title at least" >&2; exit 1; }
+    mkdir -p "$PREP_DIR"
+    printf '%s\n' "$TEXT" | "$ROOT/portable/knowledge.sh" pack --paste --out "$LEGACY_PACK"
+    archive_pack "$TEXT"
+    ;;
   --pick)
     # No-gws path: the existing interactive pack builder, then archive the
     # result into the per-meeting store (date-only stem — no start time known).
     "$ROOT/portable/knowledge.sh" pack --next
-    if STEM="$(node "$ROOT/cli/events.mjs" pack-stem < "$LEGACY_PACK" 2>/dev/null)"; then
-      mkdir -p "$PREP_DIR"
-      cp "$LEGACY_PACK" "$PREP_DIR/$STEM.md"
-      echo "prep: archived -> $PREP_DIR/$STEM.md" >&2
-    fi
+    archive_pack ""
     ;;
   show)
     shift
@@ -111,7 +160,7 @@ case "$SUB" in
     cat "$PACK"
     ;;
   ''|*[!0-9]*)
-    sed -n '3,9p' "$0" | sed 's/^# \{0,1\}//'; exit 1
+    sed -n '3,12p' "$0" | sed 's/^# \{0,1\}//'; exit 1
     ;;
   *)
     # A pack is a snapshot: --refresh pulls the last day from integrations

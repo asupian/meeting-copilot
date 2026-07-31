@@ -22,11 +22,11 @@
 // Usage: node brain/live.mjs [--transcript f] [--prep f] [--port 8787]
 
 import { execFile } from "node:child_process";
-import { readFileSync, readdirSync, existsSync, watch, appendFileSync, statSync, unlinkSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, watch, appendFileSync, writeFileSync, statSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadSystem, streamBrain, partialString, buildCheckUser, CONFIG, USER_NAME, CARD_TYPES } from "./lib.mjs";
+import { loadSystem, streamBrain, brainInFlight, partialString, buildCheckUser, CONFIG, USER_NAME, CARD_TYPES } from "./lib.mjs";
 import { parseFacts, matchGuard, matchWindow } from "./matcher.mjs";
 import { makeAmbient, finishAmbient } from "./ambient.mjs";
 import { makeRecall } from "./recall.mjs";
@@ -262,6 +262,11 @@ let adoptedSlides = "";        // pinned slide-summary wording for the current s
 let adoptedSlidesAt = 0;
 const surfaced = [];
 const cardTimes = [];
+// Per-call numbers ONLY — no transcript, no prompt text, no questions. trace.jsonl
+// carries the prompts and is deleted at shutdown with the transcript; this array
+// is what survives into perf.json so "it got slower and then hung" can be read
+// off a meeting afterwards instead of re-argued from memory.
+const perfSamples = [];
 // Votes in, tighten-only signals out, cross-meeting memory — see feedback.mjs.
 const fb = makeFeedback({ userName: USER_NAME, logPath: FEEDBACK, historyPath: FEEDBACK_HISTORY });
 let startEpoch = null;
@@ -381,25 +386,53 @@ async function check() {
   let lastTopicPartial = "";
 
   const userPrompt = buildUser(lines);
-  const { json: parsed, raw, failed, firstTokenMs, totalMs } = await streamBrain({
-    system: SYSTEM,
-    user: userPrompt,
-    model: MODEL,
-    thinkTokens: THINK,
-    onDelta: (acc) => {
-      if (canShow) {
-        const q = partialString(acc, "question");
-        if (q && q !== lastQ) { lastQ = q; broadcast({ type: "partial", question: q }); }
-      }
-      // The NOW topic streams too — no reason for the strip to wait for the
-      // full JSON when the field is already sitting in the accumulator.
-      const tp = partialString(acc, "topic");
-      if (tp && tp !== lastTopicPartial) { lastTopicPartial = tp; broadcast({ type: "now", partial: true, topic: tp.slice(0, 90) }); }
-    },
-  });
+  const callsAtStart = brainInFlight();
+  // try/finally, not a bare assignment after the await: if the call throws (or
+  // ever hangs again) inFlight must still clear. Leaving it stuck true is what
+  // silently ends the meeting's brain — every later check returns at the guard
+  // on the first line of this function, with nothing shown on the panel.
+  let result;
+  try {
+    result = await streamBrain({
+      system: SYSTEM,
+      user: userPrompt,
+      model: MODEL,
+      thinkTokens: THINK,
+      onDelta: (acc) => {
+        if (canShow) {
+          const q = partialString(acc, "question");
+          if (q && q !== lastQ) { lastQ = q; broadcast({ type: "partial", question: q }); }
+        }
+        // The NOW topic streams too — no reason for the strip to wait for the
+        // full JSON when the field is already sitting in the accumulator.
+        const tp = partialString(acc, "topic");
+        if (tp && tp !== lastTopicPartial) { lastTopicPartial = tp; broadcast({ type: "now", partial: true, topic: tp.slice(0, 90) }); }
+      },
+    });
+  } catch (e) {
+    console.error(`brain: model call THREW — ${e?.message || e}`);
+    result = { json: null, raw: "", failed: true, timedOut: false, firstTokenMs: null, totalMs: null };
+  } finally {
+    inFlight = false;
+    lastCheckDoneAt = Date.now();
+  }
+  const { json: parsed, raw, failed, timedOut, firstTokenMs, totalMs } = result;
 
-  inFlight = false;
-  lastCheckDoneAt = Date.now();
+  // Every check, one line: prompt size, latency, how many cards were riding in
+  // the prompt, and how many model calls were already running. This is the set
+  // of numbers that turns "it got progressively slower" into a measurement.
+  const perf = {
+    atSec: nowPre,
+    promptChars: userPrompt.length,
+    surfacedCount: surfaced.length,
+    callsAtStart,
+    firstTokenMs,
+    totalMs,
+    timedOut: timedOut || false,
+    failed: failed || false,
+  };
+  perfSamples.push(perf);
+  if (timedOut) broadcast({ type: "brainSlow", reason: "timeout" });
 
   // A dead model must never look like a quiet meeting: surface it on the
   // panel, put the unseen lines back for the next attempt, and don't emit a
@@ -408,7 +441,7 @@ async function check() {
     brainFailures++;
     console.error(`brain: model call FAILED — nothing returned (check \`claude\` login / network); ${brainFailures} consecutive`);
     broadcast({ type: "brainDown", count: brainFailures });
-    traceCheck({ atSec: nowPre, canShow, failed: true, userPrompt });
+    traceCheck({ atSec: nowPre, canShow, failed: true, timedOut: perf.timedOut, userPrompt, perf });
     pending = lines.concat(pending);
     return;
   }
@@ -434,7 +467,7 @@ async function check() {
     console.error(`brain: JSON parse failed (${raw.length} chars) — ${json ? "salvaged card from stream" : "no card fields, dropping"}; tail: ...${raw.slice(-140).replace(/\n/g, " ")}`);
   }
 
-  traceCheck({ atSec: nowPre, canShow, userPrompt, raw, action: json?.action ?? null, question: json?.question, type: json?.type });
+  traceCheck({ atSec: nowPre, canShow, userPrompt, raw, action: json?.action ?? null, question: json?.question, type: json?.type, perf });
 
   if (json?.summary) rollingSummary = json.summary;
   // Live readout: current topic, confirmed speakers, goal bearing. Arrives with
@@ -842,6 +875,38 @@ async function shutdown() {
       }
       for (const f of files) console.error(`live: staging -> ${f}`);
       await new Promise((r) => setTimeout(r, 400));   // let the SSE digest land
+    }
+    // Numbers-only perf record. Survives the transcript wipe on purpose: it holds
+    // latencies, prompt sizes and counts, never meeting content. First-vs-last
+    // third is the shape a "progressively slower" report shows up as.
+    if (perfSamples.length) {
+      const ok = perfSamples.filter((s) => s.totalMs != null && !s.failed);
+      const third = Math.max(1, Math.floor(ok.length / 3));
+      const mean = (xs, k) => (xs.length ? Math.round(xs.reduce((a, s) => a + s[k], 0) / xs.length) : null);
+      const early = ok.slice(0, third), late = ok.slice(-third);
+      const summary = {
+        calls: perfSamples.length,
+        failed: perfSamples.filter((s) => s.failed).length,
+        timedOut: perfSamples.filter((s) => s.timedOut).length,
+        maxConcurrent: Math.max(0, ...perfSamples.map((s) => s.callsAtStart + 1)),
+        early: { totalMs: mean(early, "totalMs"), promptChars: mean(early, "promptChars") },
+        late: { totalMs: mean(late, "totalMs"), promptChars: mean(late, "promptChars") },
+        samples: perfSamples,
+      };
+      const slowdown = summary.early.totalMs && summary.late.totalMs
+        ? summary.late.totalMs / summary.early.totalMs : null;
+      try {
+        writeFileSync(join(dirname(TRANSCRIPT), "perf.json"), JSON.stringify(summary, null, 2));
+      } catch {}
+      console.error(
+        `live: ${summary.calls} brain call(s), ${summary.failed} failed, ${summary.timedOut} timed out, peak ${summary.maxConcurrent} concurrent; ` +
+        `latency ${summary.early.totalMs}ms -> ${summary.late.totalMs}ms` +
+        (slowdown ? ` (${slowdown.toFixed(1)}x)` : "") +
+        `, prompt ${summary.early.promptChars} -> ${summary.late.promptChars} chars`
+      );
+      if (slowdown && slowdown >= 2) {
+        console.error("live: WARNING — calls got materially slower over the meeting; perf.json in the session dir has the per-call detail");
+      }
     }
     // Session votes -> cross-meeting memory (see feedback.mjs persist).
     const persisted = fb.persist(MEETING_TITLE);

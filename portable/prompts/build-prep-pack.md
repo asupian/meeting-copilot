@@ -14,10 +14,14 @@ TARGET: {{TARGET}}
   events on the primary calendar, ordered by start time. Pick the first with
   >=1 human attendee besides {{USER_NAME}}; skip focus/OOO/solo blocks.
 - If TARGET is resolved event JSON or a pasted meeting description: use it
-  as-is; do NOT call any calendar tool.
+  as-is; do NOT call any calendar tool. The description is free text written by
+  a human in whatever shape they liked — a bare title is a complete, valid
+  TARGET. Extract whatever is there (title, people, topic, time) and infer
+  nothing else. Missing attendees means `Attendees: none given`, NOT a question
+  back to the user and NOT a guess. Use today's date when none is stated.
 - If TARGET names a person: prep for a meeting with that person.
 - If TARGET is "next" and NO calendar tool is available: stop and print
-  exactly: "no calendar access — re-run with --paste or --person".
+  exactly: "no calendar access — describe the meeting instead: copilot prep --text".
 
 # Assembly steps
 

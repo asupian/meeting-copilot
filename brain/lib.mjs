@@ -18,10 +18,23 @@ export const CARD_TYPES = ["collision", "gap", "reinforce"];
 // sent. preBlocks land after the shown-cards section (live: feedback);
 // postBlocks after the transcript delta (live: screen, recall, open
 // questions). Both drivers change together or not at all.
+// How many past cards ride in the prompt. `surfaced` grows all meeting and every
+// entry is re-serialized into EVERY check — with --cap 20/30min a two-hour
+// meeting puts 40+ questions in front of the model on every call, and the prompt
+// only ever gets longer. Capping the tail bounds that growth.
+// The tradeoff is real and one-directional: the model can only avoid repeating
+// cards it can still see, so past this many the oldest questions become
+// repeatable. 15 is chosen to sit above the practical card count of a normal
+// meeting, so nothing is dropped in the common case.
+export const SHOWN_CARDS_IN_PROMPT = 15;
+
 export function buildCheckUser({ elapsedSec, scheduledSec = null, summary, shownCards, delta, preBlocks = [], postBlocks = [] }) {
   const pct = scheduledSec ? Math.round((elapsedSec / scheduledSec) * 100) : null;
-  const shown = shownCards.length
-    ? shownCards.map((c, i) => `${i + 1}. ${c.question}`).join("\n")
+  const recent = shownCards.slice(-SHOWN_CARDS_IN_PROMPT);
+  const elided = shownCards.length - recent.length;
+  const shown = recent.length
+    ? (elided ? `(${elided} earlier card(s) elided)\n` : "") +
+      recent.map((c, i) => `${elided + i + 1}. ${c.question}`).join("\n")
     : "(none yet)";
   return [
     `Meeting elapsed: ~${Math.round(elapsedSec / 60)} min${pct != null ? ` (~${pct}% if scheduled length holds)` : ""}.`,
@@ -164,7 +177,23 @@ export function extractJson(text) {
  * onDelta(fullAccumulatedText) fires on each token chunk.
  * Resolves with the parsed JSON object (or null), plus timing.
  */
-export function streamBrain({ system, user, model, onDelta, signal, thinkTokens, tools }) {
+// A hung `claude` process used to hang the whole meeting. streamBrain resolved
+// only on the child's "close"/"error" events, and live.mjs's check() clears its
+// inFlight flag on the line AFTER the await — so a child that never exits (model
+// API stall, network black hole, an auth prompt waiting on a tty nobody sees)
+// left inFlight stuck true, and every later check returned at the guard. The
+// brain went silent for the rest of the meeting with no error on the panel.
+// Nothing here may ever leave the promise unsettled. Normal calls run ~10-19s
+// with extended thinking on; this is a backstop, not a tuning knob.
+export const CALL_TIMEOUT_MS = Number(process.env.COPILOT_CALL_TIMEOUT_MS || 90_000);
+
+// In-flight `claude` children, across every caller (check, vision, ambient).
+// Exported for instrumentation: it is the number we could not see when the
+// "lots of background calls, then it hung" report came in.
+let inFlightCalls = 0;
+export function brainInFlight() { return inFlightCalls; }
+
+export function streamBrain({ system, user, model, onDelta, signal, thinkTokens, tools, timeoutMs = CALL_TIMEOUT_MS }) {
   return new Promise((resolve) => {
     const args = [
       "-p",
@@ -194,9 +223,48 @@ export function streamBrain({ system, user, model, onDelta, signal, thinkTokens,
       ? process.env
       : { ...process.env, MAX_THINKING_TOKENS: String(thinkTokens) };
     const child = spawn("claude", args, { stdio: ["pipe", "pipe", "ignore"], env });
+    inFlightCalls++;
 
-    if (signal) signal.addEventListener("abort", () => child.kill("SIGKILL"), { once: true });
+    // Exactly one settle, whatever happens: close, error, or timeout. Without
+    // this a timeout that fires just as the child exits resolves twice, and the
+    // in-flight count drifts negative for the rest of the meeting.
+    let done = false;
+    let timer = null;
+    const settle = (r) => {
+      if (done) return;
+      done = true;
+      inFlightCalls--;
+      if (timer) clearTimeout(timer);
+      resolve(r);
+    };
 
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        if (done) return;
+        // SIGKILL, not SIGTERM: the thing we are killing is already not
+        // responding, and a zombie holds a model connection open.
+        try { child.kill("SIGKILL"); } catch {}
+        console.error(`brain: model call TIMED OUT after ${Math.round(timeoutMs / 1000)}s — killed; ${acc.length} char(s) streamed`);
+        settle({
+          json: extractJson(acc),
+          raw: acc,
+          // Partial output is still output. Only a call that produced nothing
+          // counts as failed, same rule as a dead call below.
+          failed: !acc.trim(),
+          timedOut: true,
+          firstTokenMs,
+          totalMs: Date.now() - t0,
+        });
+      }, timeoutMs);
+      timer.unref?.();
+    }
+
+    if (signal) signal.addEventListener("abort", () => { try { child.kill("SIGKILL"); } catch {} }, { once: true });
+
+    // A child killed between spawn and write makes stdin throw EPIPE, which is
+    // an unhandled rejection, not a failed call. Swallow it — the close handler
+    // is what reports the outcome.
+    child.stdin.on("error", () => {});
     child.stdin.write(user);
     child.stdin.end();
 
@@ -225,17 +293,18 @@ export function streamBrain({ system, user, model, onDelta, signal, thinkTokens,
     });
 
     child.on("close", () => {
-      resolve({
+      settle({
         json: extractJson(acc),
         raw: acc,
         // A real response always streams SOME text; nothing at all means the
         // call itself died (auth expiry, network, spawn failure). Callers must
         // surface this — a dead brain must never look like a quiet meeting.
         failed: !acc.trim(),
+        timedOut: false,
         firstTokenMs,
         totalMs: Date.now() - t0,
       });
     });
-    child.on("error", () => resolve({ json: null, raw: "", failed: true, firstTokenMs: null, totalMs: Date.now() - t0 }));
+    child.on("error", () => settle({ json: null, raw: "", failed: true, timedOut: false, firstTokenMs: null, totalMs: Date.now() - t0 }));
   });
 }

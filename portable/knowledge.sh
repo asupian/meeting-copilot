@@ -177,7 +177,7 @@ case "$CMD" in
       case "$1" in
         --next)   TARGET="next"; MODE="interactive"; shift ;;
         --person) TARGET="person: $2"; MODE="headless"; shift 2 ;;
-        --paste)  [ -t 0 ] && echo "paste the meeting details (title, time, attendees+emails), then Ctrl-D:" >&2
+        --paste)  [ -t 0 ] && echo "describe the meeting — any wording, a title alone is enough (Ctrl-D when done):" >&2
                   TARGET="this pasted meeting description (do NOT call any calendar tool):
 $(cat)"; MODE="headless"; shift ;;
         --out)    OUT="$2"; shift 2 ;;

@@ -9,6 +9,13 @@
 #   SHIM_CARD_TYPE=<type>   card `type` emitted (default: collision).
 #   SHIM_DEAD=1             emit nothing and exit 0 — simulates a dead model
 #                           (auth expiry / network) for brainDown testing.
+#   SHIM_HANG=1             take the prompt, then never exit — the model call
+#                           that stalls rather than fails. This is the shape
+#                           that used to silently end a meeting's brain:
+#                           streamBrain settled only on the child's close/error,
+#                           so check()'s inFlight flag stuck true and every
+#                           later check bailed at the guard with nothing on the
+#                           panel. COPILOT_CALL_TIMEOUT_MS bounds it now.
 #
 # Behavior: ambient-extraction calls (system prompt contains "ambient
 # listener") get a canned extraction with one unanswered question; everything
@@ -21,6 +28,9 @@ done
 n=$(ls "${PROMPT_CAPTURE:?set PROMPT_CAPTURE}".user.* 2>/dev/null | wc -l | tr -d ' '); n=$((n+1))
 cat > "$PROMPT_CAPTURE.user.$n"
 [ -n "${SHIM_DEAD:-}" ] && exit 0
+# Stall forever. The parent must kill this; if the test hangs instead of
+# failing, the timeout regressed.
+[ -n "${SHIM_HANG:-}" ] && { while :; do sleep 60; done; }
 case "$SYS" in
   *"ambient listener"*)
     node -e 'const j={commitments:[],questions:[{text:"What is the margin impact of the new pricing?",asked_by:"the user"}],answered_ids:[]};console.log(JSON.stringify({type:"stream_event",event:{type:"content_block_delta",delta:{text:JSON.stringify(j)}}}));'
