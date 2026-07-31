@@ -61,13 +61,40 @@ case "${1:-}" in
     # recall or the meeting list existed — which is the complaint this closes.
     "$ROOT/onboarding/integrations.sh" || true
     # The main event: connect + ingest the knowledge base (wizard needs claude).
+    # Every branch that does NOT end with a usable knowledge dir is recorded, so
+    # the summary at the bottom can refuse to say MEETING-READY. It used to say
+    # it unconditionally: a missing claude CLI skipped the wizard with one line
+    # mid-scroll, and onboarding still signed off — leaving compiled binaries,
+    # no knowledge base, and a user who thinks they are done.
+    KSTATE=ok
     if ! command -v claude >/dev/null 2>&1; then
-      echo "claude CLI not found — running the build first; install claude, then: copilot onboard knowledge" >&2
+      KSTATE=no-claude
+      echo "" >&2
+      echo "STOP: the claude CLI is not installed. It is not optional — it IS the brain," >&2
+      echo "so nothing can run without it, knowledge base included. Compiling the capture" >&2
+      echo "binaries anyway so that part is done, but this is a TWO-STEP install now:" >&2
+      echo "  1. install + log in:  https://claude.com/claude-code" >&2
+      echo "  2. come back and run: copilot onboard knowledge" >&2
+      echo "" >&2
     elif [ ! -f "$CONF" ]; then
-      "$ROOT/portable/knowledge.sh" setup
+      # set -e would abort onboarding mid-way if the wizard exits non-zero,
+      # dropping the user out with no summary and no idea where they stand.
+      # Catch it, keep going, and report it at the end instead.
+      "$ROOT/portable/knowledge.sh" setup || KSTATE=wizard-failed
+      # The wizard writes the config, and common.sh sourced it before it existed.
+      if [ -f "$CONF" ]; then
+        # shellcheck disable=SC1090
+        source "$CONF"
+      fi
     else
       echo "config found — knowledge wizard skipped (top up anytime: copilot onboard knowledge)" >&2
     fi
+    # A config file is not a knowledge base. An empty knowledge dir produces a
+    # copilot that runs, stays silent all meeting, and looks broken — so it is
+    # not "ready" either, and it is worth saying while the wizard is one command
+    # away rather than at meeting time. (wizard-failed is kept: it says WHY the
+    # knowledge dir is missing, which knowledge_state alone cannot know.)
+    if [ "$KSTATE" = ok ]; then KSTATE="$(knowledge_state)"; fi
     # Build tail: wait out the compiles, then cert + bundles + the two Allow
     # dialogs, with the user back at the keyboard.
     if [ -n "$BUILD_PID" ]; then
@@ -94,9 +121,40 @@ case "${1:-}" in
     # and one who finds out mid-meeting.
     echo "" >&2
     echo "final health check:" >&2
-    "$ROOT/cli/doctor.sh" || echo "(FAILures above must be fixed before a meeting — re-run: copilot doctor)" >&2
+    "$ROOT/cli/doctor.sh" || true
     echo "" >&2
-    echo "MEETING-READY. At meeting time:  copilot live   (packs are already built; re-prep anytime: copilot prep list)" >&2
+    # Sign-off tells the truth or refuses to sign. Non-zero exit so a script or
+    # an agent driving the install can tell the difference too.
+    case "$KSTATE" in
+      ok)
+        echo "MEETING-READY. At meeting time:  copilot live   (packs are already built; re-prep anytime: copilot prep list)" >&2
+        ;;
+      no-claude)
+        echo "NOT READY — capture binaries are built, but there is no brain and no knowledge base." >&2
+        echo "  1. install + log in:  https://claude.com/claude-code" >&2
+        echo "  2. then run:          copilot onboard knowledge" >&2
+        exit 1
+        ;;
+      wizard-failed)
+        echo "NOT READY — the knowledge wizard did not finish, so there is nothing for the" >&2
+        echo "copilot to cite. Everything else (binaries, permissions) is done." >&2
+        echo "  retry:  copilot onboard knowledge" >&2
+        exit 1
+        ;;
+      no-config|no-knowledge-dir)
+        echo "NOT READY — no knowledge dir. Cards are grounded in your notes; with no notes" >&2
+        echo "there is nothing to ground them in." >&2
+        echo "  fix:  copilot onboard knowledge" >&2
+        exit 1
+        ;;
+      empty-knowledge)
+        echo "NOT READY — your knowledge dir has no notes in it." >&2
+        echo "The copilot will run and stay silent all meeting, which looks like a bug and" >&2
+        echo "is not one: it only speaks from what you hold." >&2
+        echo "  fix:  copilot onboard knowledge     (or: copilot onboard import <notes-dir>)" >&2
+        exit 1
+        ;;
+    esac
     ;;
   replay) shift; replay_recording "${1:?usage: onboard.sh replay <recording-file>}" ;;
   knowledge) exec "$ROOT/portable/knowledge.sh" setup ;;

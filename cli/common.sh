@@ -12,6 +12,22 @@ LEGACY_PACK="${HOME}/.meeting-copilot/prep-pack.md"
 export ORG_DOMAIN="${ORG_DOMAIN:-}"   # cli/events.mjs uses it to flag external meetings
 LOOKAHEAD="${PREP_LOOKAHEAD_H:-12}"
 
+knowledge_state() { # -> ok | no-claude | no-config | no-knowledge-dir | empty-knowledge
+  # Is there actually something for the copilot to cite? A config file is not a
+  # knowledge base and an installed binary is not a brain, but onboarding used
+  # to treat both as "done" and sign off MEETING-READY regardless. Kept here so
+  # it is one testable answer rather than three ad-hoc checks that drift apart.
+  command -v claude >/dev/null 2>&1 || { echo no-claude; return; }
+  [ -f "$CONF" ] || { echo no-config; return; }
+  # $CONF may have been written after common.sh sourced it (the wizard runs
+  # mid-onboard), so re-read rather than trusting the startup snapshot.
+  local kdir
+  kdir="$(sed -n 's/^KNOWLEDGE_DIR="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$CONF" | tail -1)"
+  [ -n "$kdir" ] && [ -d "$kdir" ] || { echo no-knowledge-dir; return; }
+  [ -n "$(find "$kdir" -name '*.md' 2>/dev/null | head -1)" ] || { echo empty-knowledge; return; }
+  echo ok
+}
+
 find_pack() { # find_pack <name> — exactly one per-meeting pack matching <name>, else fail loudly
   local matches count
   matches="$(find "$PREP_DIR" -maxdepth 1 -name '*.md' 2>/dev/null | grep -i -- "$1" || true)"

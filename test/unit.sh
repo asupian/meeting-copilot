@@ -43,6 +43,31 @@ is "$NODE_READ" "36" "config: loadConfig agrees with bash"
 "$ROOT/copilot" config set USER_NAME 'has"quote' >/dev/null 2>&1 && bad "config: quote accepted" || ok "config: quotes rejected"
 "$ROOT/copilot" config set lower x >/dev/null 2>&1 && bad "config: lowercase key accepted" || ok "config: lowercase key rejected"
 
+# ── knowledge_state: onboarding must not sign off MEETING-READY on nothing ──
+# The regression: a missing claude CLI skipped the knowledge wizard with one
+# line mid-scroll and onboarding still printed MEETING-READY, leaving compiled
+# binaries and no knowledge base. Same lie for a config naming an empty (or
+# absent) knowledge dir — the copilot then runs and stays silent all meeting,
+# which looks like a bug and is not one.
+KS="$SANDBOX/ks"; mkdir -p "$KS/.meeting-copilot"
+ks() { HOME="$KS" bash -c 'source "$1/cli/common.sh"; knowledge_state' _ "$ROOT"; }
+ks_noclaude() { HOME="$KS" PATH="/usr/bin:/bin" bash -c 'source "$1/cli/common.sh"; knowledge_state' _ "$ROOT"; }
+
+is "$(ks_noclaude)" "no-claude" "knowledge_state: no claude CLI"
+if command -v claude >/dev/null 2>&1; then
+  is "$(ks)" "no-config" "knowledge_state: no config"
+  printf 'USER_NAME="T"\n' > "$KS/.meeting-copilot/config"
+  is "$(ks)" "no-knowledge-dir" "knowledge_state: config but no knowledge dir"
+  printf 'KNOWLEDGE_DIR="%s/kb"\n' "$KS" >> "$KS/.meeting-copilot/config"
+  is "$(ks)" "no-knowledge-dir" "knowledge_state: knowledge dir named but absent"
+  mkdir -p "$KS/kb/people"
+  is "$(ks)" "empty-knowledge" "knowledge_state: knowledge dir exists but is empty"
+  printf '# Dana\n' > "$KS/kb/people/dana.md"
+  is "$(ks)" "ok" "knowledge_state: notes present -> ok"
+else
+  ok "knowledge_state: post-claude cases skipped (no claude CLI on PATH)"
+fi
+
 echo "" >&2
 [ "$FAIL" = 0 ] && echo "UNIT: all pass" >&2 || echo "UNIT: FAILURES" >&2
 exit "$FAIL"

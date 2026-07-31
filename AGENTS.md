@@ -34,6 +34,11 @@ it is connected, and how to connect it. Read-only; it installs nothing.
 ./copilot onboard
 ```
 
+**Check the exit code.** `onboard` exits 0 only when there is a knowledge base to
+cite; otherwise it prints `NOT READY —` with the reason and the one command that
+fixes it, and exits 1. Do not report a successful install on a non-zero exit: the
+binaries can be built and the copilot still have nothing to say.
+
 What happens, and where the human is required (you cannot do these parts):
 
 1. Capture binaries compile in the background. No interaction.
