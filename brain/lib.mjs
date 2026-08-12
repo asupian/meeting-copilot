@@ -11,6 +11,18 @@ import { join } from "node:path";
 // whitelists the model's `type` against this; the panel colors its chip by it.
 export const CARD_TYPES = ["collision", "gap", "reinforce"];
 
+// Card-budget defaults, side by side so the two drivers can't drift unseen.
+// They are DELIBERATELY different: replay is the conservative regression
+// surface; live opines more freely because the model plus the panel's
+// feedback loop are the bar there. The asymmetry has a measured cost — in a
+// dense meeting replay starved its sharpest anchor (5 attempts, never shown)
+// while live surfaced it — which is what the starvation bypass in
+// brain-loop.mjs compensates for.
+export const CARD_CAPS = {
+  replay: { cap: 3, minGapSec: 180 },
+  live:   { cap: 20, minGapSec: 0 },
+};
+
 // One check's user prompt, shared by live.mjs and brain-loop.mjs so replay
 // and live meetings show the model the SAME shape. A divergence here means
 // fixtures pass while live behaves differently — it happened once: replay
@@ -27,6 +39,21 @@ export const CARD_TYPES = ["collision", "gap", "reinforce"];
 // repeatable. 15 is chosen to sit above the practical card count of a normal
 // meeting, so nothing is dropped in the common case.
 export const SHOWN_CARDS_IN_PROMPT = 15;
+
+// The rolling summary is contracted to ONE paragraph, but the model drifts to
+// appending instead of rewriting ("Pre-meeting chatter gave way to..." was
+// still the opening clause 15 minutes in), and an accreting summary is the
+// other unbounded term in prompt growth (measured 2026-08-11: 1272 -> 6516
+// chars over 16 min, latency 3.1x). The instruction says rewrite; this cap is
+// the defensive floor under it, applied where the summary is adopted so both
+// drivers stay identical. Cut at a word break: a mid-word cut reads as
+// transcription garbage and the model quotes it back.
+export const SUMMARY_MAX_CHARS = 700;
+export function capSummary(s) {
+  if (!s || s.length <= SUMMARY_MAX_CHARS) return s;
+  const cut = s.lastIndexOf(" ", SUMMARY_MAX_CHARS);
+  return s.slice(0, cut > SUMMARY_MAX_CHARS / 2 ? cut : SUMMARY_MAX_CHARS) + " …";
+}
 
 export function buildCheckUser({ elapsedSec, scheduledSec = null, summary, shownCards, delta, preBlocks = [], postBlocks = [] }) {
   const pct = scheduledSec ? Math.round((elapsedSec / scheduledSec) * 100) : null;
@@ -47,7 +74,7 @@ export function buildCheckUser({ elapsedSec, scheduledSec = null, summary, shown
     `New transcript since last check:\n${delta}${asrCaveat(delta)}`,
     ...postBlocks.flatMap((b) => (b ? [``, b] : [])),
     ``,
-    `Decide: stay silent, or surface ONE grounded card. Always return the \`now\` object (current topic, confirmed speakers, goal bearing) and an updated one-paragraph rolling summary.`,
+    `Decide: stay silent, or surface ONE grounded card. Always return the \`now\` object (current topic, confirmed speakers, goal bearing) and an updated one-paragraph rolling summary — REWRITE the summary each time, compressing older ground to make room; do not append. Keep it under ~80 words.`,
     ``,
     // Without extended thinking the model drifts to prose; this holds it to JSON.
     `Respond with ONLY the JSON object. Begin your reply with { and end with }. No prose before or after, no markdown fences.`,
@@ -269,6 +296,7 @@ export function streamBrain({ system, user, model, onDelta, signal, thinkTokens,
     child.stdin.end();
 
     let buf = "";
+    let errText = "";
     child.stdout.on("data", (d) => {
       buf += d;
       let nl;
@@ -289,6 +317,9 @@ export function streamBrain({ system, user, model, onDelta, signal, thinkTokens,
             }
           }
         }
+        // A dead call ("Not logged in", rate limit) streams no deltas — its
+        // only explanation rides the final result event. Keep it for callers.
+        if (j.type === "result" && j.is_error && !errText) errText = String(j.result || "").trim();
       }
     });
 
@@ -301,10 +332,11 @@ export function streamBrain({ system, user, model, onDelta, signal, thinkTokens,
         // surface this — a dead brain must never look like a quiet meeting.
         failed: !acc.trim(),
         timedOut: false,
+        error: errText || null,
         firstTokenMs,
         totalMs: Date.now() - t0,
       });
     });
-    child.on("error", () => settle({ json: null, raw: "", failed: true, timedOut: false, firstTokenMs: null, totalMs: Date.now() - t0 }));
+    child.on("error", (e) => settle({ json: null, raw: "", failed: true, timedOut: false, error: e?.message || "claude could not be spawned", firstTokenMs: null, totalMs: Date.now() - t0 }));
   });
 }

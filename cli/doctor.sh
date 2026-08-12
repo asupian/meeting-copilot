@@ -14,7 +14,38 @@ bad()  { printf 'FAIL  %s\n' "$*"; FAIL=1; }
 OSVER="$(sw_vers -productVersion 2>/dev/null || echo 0)"
 [ "${OSVER%%.*}" -ge 26 ] 2>/dev/null && ok "macOS $OSVER" || bad "macOS $OSVER — 26+ required (on-device transcriber)"
 command -v node   >/dev/null 2>&1 && ok "node $(node -v)" || bad "node missing (brew install node)"
-command -v claude >/dev/null 2>&1 && ok "claude CLI" || bad "claude CLI missing — the brain runs on it (https://claude.com/claude-code)"
+if command -v claude >/dev/null 2>&1; then
+  # `claude auth status` is free (no model call, ~0.2s) and catches the worst
+  # first-run trap: binary present, login missing — which otherwise surfaces
+  # much later as a silent brain / "no cards emitted".
+  AUTHJ="$(claude auth status 2>/dev/null || true)"
+  case "$AUTHJ" in
+    *'"loggedIn": true'*)  ok "claude CLI (logged in)" ;;
+    *'"loggedIn": false'*) bad "claude CLI not logged in — run: claude auth login" ;;
+    *)                     ok "claude CLI (login state unknown — CLI predates 'auth status')" ;;
+  esac
+  # --probe: one real haiku call (~2-5s). `auth status` reads LOCAL state and
+  # keeps saying loggedIn:true after the refresh token dies server-side — a
+  # state where every brain call fails (seen 2026-08-11). Only a live call
+  # proves the brain will answer, so onboarding and the replay gate run this;
+  # the plain sweep stays model-free.  macOS ships no timeout(1): watchdog.
+  if [ "${1:-}" = "--probe" ]; then
+    PROBE_OUT="$(mktemp)"
+    claude -p "Reply with exactly: OK" --model claude-haiku-4-5-20251001 >"$PROBE_OUT" 2>&1 &
+    PROBE_PID=$!
+    ( sleep 30; kill "$PROBE_PID" 2>/dev/null ) & WATCHDOG=$!
+    wait "$PROBE_PID" 2>/dev/null; PROBE_RC=$?
+    kill "$WATCHDOG" 2>/dev/null; wait "$WATCHDOG" 2>/dev/null
+    if [ "$PROBE_RC" = 0 ] && grep -q "OK" "$PROBE_OUT"; then
+      ok "claude live probe (a real call round-tripped)"
+    else
+      bad "claude live probe FAILED — $(head -1 "$PROBE_OUT" 2>/dev/null | cut -c1-120)${PROBE_RC:+ (exit $PROBE_RC)} — try: claude auth login"
+    fi
+    rm -f "$PROBE_OUT"
+  fi
+else
+  bad "claude CLI missing — the brain runs on it (https://claude.com/claude-code)"
+fi
 command -v swiftc >/dev/null 2>&1 && ok "swiftc" || bad "swiftc missing (xcode-select --install)"
 # Optional deps
 command -v qmd >/dev/null 2>&1 && ok "qmd (live recall)" || warn "qmd missing — live recall off (optional; https://github.com/tobi/qmd)"
@@ -31,7 +62,14 @@ security find-identity -v -p codesigning 2>/dev/null | grep -qE "meeting-copilot
 if [ -f "$CONF" ]; then
   # shellcheck disable=SC1090
   source "$CONF"
-  [ -n "${USER_NAME:-}" ] && [ -n "${ORG_DOMAIN:-}" ] && ok "config: $USER_NAME @ $ORG_DOMAIN" || bad "config incomplete — run: copilot onboard knowledge"
+  if [ -n "${USER_NAME:-}" ] && [ -n "${ORG_DOMAIN:-}" ]; then
+    case "$ORG_DOMAIN" in
+      *noreply*) warn "config: ORG_DOMAIN is '$ORG_DOMAIN' — a noreply address, so every attendee counts as external. Fix: copilot config set ORG_DOMAIN <your-org.com>" ;;
+      *)         ok "config: $USER_NAME @ $ORG_DOMAIN" ;;
+    esac
+  else
+    bad "config incomplete — run: copilot onboard knowledge"
+  fi
   KDIR="${KNOWLEDGE_DIR:-$HOME/.meeting-copilot/knowledge}"
   if [ -d "$KDIR" ]; then
     NFACTS="$(find "$KDIR" -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"

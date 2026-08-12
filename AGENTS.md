@@ -21,8 +21,8 @@ Read-only, ~2 seconds, tells you exactly what's missing. Requirements:
 | macOS 26+ | `sw_vers -productVersion` | Hard stop — the on-device transcriber ships with macOS 26. |
 | node | `node -v` | `brew install node` |
 | swiftc | `swiftc --version` | `xcode-select --install` (HUMAN may need to approve/password) |
-| Claude Code CLI, logged in | `claude --version` | Install from claude.com/claude-code; **login is a HUMAN step** |
-| gws CLI (optional) | `command -v gws` | Without it, the calendar meeting-picker is unavailable; prep still works via `copilot prep --text "<describe the meeting>"` |
+| Claude Code CLI, logged in | `copilot doctor --probe` (auth status + one live haiku call; `auth status` alone can say loggedIn after the refresh token dies) | Install from claude.com/claude-code; **login is a HUMAN step** (`claude auth login`) |
+| gws CLI (optional) | `command -v gws` | Without it, the calendar meeting-picker is unavailable; prep still works via `--pick`/`--paste` |
 | qmd (optional) | `command -v qmd` | Without it, live recall over the knowledge dir is off |
 
 `./copilot onboard integrations` prints what each optional piece unlocks, whether
@@ -44,10 +44,19 @@ What happens, and where the human is required (you cannot do these parts):
 1. Capture binaries compile in the background. No interaction.
 2. A claude session asks the HUMAN where their notes live (Obsidian / Notion
    / a folder) and ingests them as the knowledge dir. These are the human's
-   answers — hand control back for this conversation.
-3. The build finishes: signing cert, app bundles, then a live self-test.
-   macOS shows **two permission dialogs** (Microphone, System Audio
-   Recording) — the HUMAN must click Allow. You cannot grant TCC permissions.
+   answers — hand control back for this conversation. **If you are running
+   this from a non-interactive shell (the normal case for an agent), the
+   wizard defers itself and the build continues; tell the HUMAN to run
+   `./copilot onboard knowledge` in their own terminal afterwards.** You can
+   still seed the bare config non-interactively so prep/live work while the
+   wizard waits: `COPILOT_NAME="<name>" COPILOT_ORG_DOMAIN="<org.com>"
+   ./portable/knowledge.sh init --yes` (a git noreply email is rejected as an
+   org domain rather than silently written).
+3. The build finishes: signing cert (created unattended when there is no
+   terminal — never skip it, ad-hoc signing churns permissions), app bundles,
+   then a live self-test. macOS shows **two permission dialogs** (Microphone,
+   System Audio Recording) — the HUMAN must click Allow. You cannot grant
+   TCC permissions.
 4. Optional trial: the human may provide a path to a past meeting recording
    (Enter skips).
 5. Prep packs auto-build for upcoming calendar meetings (skipped gracefully

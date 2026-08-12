@@ -28,7 +28,7 @@ import { readFileSync, existsSync, appendFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadSystem, streamBrain, buildCheckUser, renderTemplate, USER_NAME } from "./lib.mjs";
+import { loadSystem, streamBrain, buildCheckUser, capSummary, renderTemplate, USER_NAME, CARD_CAPS } from "./lib.mjs";
 import { parseFacts, matchWindow, matchGuard } from "./matcher.mjs";
 import { makeAmbient, finishAmbient } from "./ambient.mjs";
 
@@ -43,8 +43,8 @@ const liveFile = has("--live") ? (val("--live", null) || join(CURRENT, "transcri
 const prepPath = val("--prep", join(CURRENT, "prep-pack.md"));
 const contractPath = val("--contract", join(HERE, "contract.md"));
 const TICK_SEC = Number(val("--tick", 45));
-const CAP = Number(val("--cap", 3));
-const MIN_GAP_SEC = Number(val("--min-gap", 180)); // don't let early chatter starve a late card
+const CAP = Number(val("--cap", CARD_CAPS.replay.cap));
+const MIN_GAP_SEC = Number(val("--min-gap", CARD_CAPS.replay.minGapSec)); // don't let early chatter starve a late card
 const cardsOut = val("--cards-out", null);
 const traceOut = val("--trace", null);   // per-tick {atSec, action, question, summary} — makes a bad card reconstructible
 const model = val("--model", null);
@@ -76,10 +76,10 @@ const PREP_TEXT = existsSync(prepPath) ? readFileSync(prepPath, "utf8") : "";
 // ---- brain calls: clean, tool-free, single-turn, via the shared stream core ----
 async function callBrain(userText) {
   if (dryRun) return { action: "silent", _dry: true };
-  const { json, raw } = await streamBrain({ system: SYSTEM, user: userText, model });
+  const { json, raw, error } = await streamBrain({ system: SYSTEM, user: userText, model });
   if (!json) {
     if (raw) console.error("brain: unparseable model output:", raw.slice(0, 200));
-    else console.error("brain: claude -p produced no output");
+    else console.error(`brain: claude -p produced no output${error ? ` — ${error}` : ""}`);
     return { action: "silent", _error: true };
   }
   return json;
@@ -114,6 +114,26 @@ async function callBrainNarrow(candidates, windowText) {
 let rollingSummary = "(meeting just started)";
 const surfaced = [];              // {question, why, source, atSec}
 const cardTimes = [];             // epoch-sec of emitted cards, for the cap
+
+// Starvation bypass: the cap is a rate limit, not a verdict on the card. When
+// the model keeps reaching for the SAME held fact — 3 cap-suppressions of one
+// anchor within 10 minutes — the meeting is pressing on that fact and it has
+// earned the extra slot (measured 2026-04-27 replay: the meeting's sharpest
+// anchor was attempted 5x and never shown). Min-gap still applies; one bypass
+// per anchor, then its counter resets.
+const capPressed = new Map();     // anchor key -> {count, firstSec}
+function starvationBypass(source, nowSec) {
+  const key = (source || "").toLowerCase().replace(/\s+/g, " ").slice(0, 40);
+  if (!key) return false;
+  let e = capPressed.get(key);
+  if (!e || nowSec - e.firstSec > 600) e = { count: 0, firstSec: nowSec };
+  e.count++;
+  capPressed.set(key, e);
+  if (e.count < 3) return false;
+  capPressed.delete(key);
+  console.error(`brain: cap BYPASS — anchor pressed ${e.count}x in ${Math.round((nowSec - e.firstSec) / 60)}min: ${key}`);
+  return true;
+}
 const collisionTimes = [];        // contradictions/decisions — one slot per 30min is reserved for them
 
 function windowOfCards(nowSec, spanSec) {
@@ -157,7 +177,7 @@ async function tick(deltaLines, elapsedSec, totalGuessSec) {
     return;
   }
   const out = await callBrain(userText);
-  if (out.summary) rollingSummary = out.summary;
+  if (out.summary) rollingSummary = capSummary(out.summary);
   if (traceOut) {
     appendFileSync(traceOut, JSON.stringify({
       atSec: nowSec, action: out.action ?? "error",
@@ -171,7 +191,7 @@ async function tick(deltaLines, elapsedSec, totalGuessSec) {
       console.error(`brain: card suppressed (min-gap ${MIN_GAP_SEC}s): ${out.question.slice(0, 60)}`);
       return;
     }
-    if (windowOfCards(nowSec, 30 * 60) >= CAP) {
+    if (windowOfCards(nowSec, 30 * 60) >= CAP && !starvationBypass(out.source, nowSec)) {
       console.error(`brain: card suppressed (cap ${CAP}/30min reached): ${out.question.slice(0, 60)}`);
       return;
     }

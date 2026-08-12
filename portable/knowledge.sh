@@ -72,6 +72,9 @@ gws_events() { # gws_events <hours>
 }
 
 if [ "$CMD" = "setup" ]; then
+  # The wizard is an interactive claude session; without a real terminal it
+  # cannot interview anyone. Fail plainly instead of exec-ing into a dead end.
+  [ -t 0 ] || { echo "setup: the wizard needs an interactive terminal — run there: copilot onboard knowledge" >&2; exit 1; }
   # The wizard collects config itself, so it must run WITHOUT the config gate
   # below. Placeholders are filled inline here (fill() needs a sourced config).
   KDIR="${HOME}/.meeting-copilot/knowledge"
@@ -95,13 +98,31 @@ if [ "$CMD" = "init" ]; then
   mkdir -p "${HOME}/.meeting-copilot/knowledge"/{people,initiatives,meetings,notes}
   if [ ! -f "$CONF" ]; then
     # Prefill from git config: usually two Enter keys instead of two answers.
-    GUESS_NAME="$(git config user.name 2>/dev/null || true)"
-    GUESS_DOMAIN="$(git config user.email 2>/dev/null | sed -n 's/.*@//p' || true)"
-    printf 'What is your name (as attendees would say it)%s? ' "${GUESS_NAME:+ [$GUESS_NAME]}"
-    read -r NAME; NAME="${NAME:-$GUESS_NAME}"
-    printf 'Your organization email domain (attendees outside it count as external)%s? ' "${GUESS_DOMAIN:+ [$GUESS_DOMAIN]}"
-    read -r DOMAIN; DOMAIN="${DOMAIN:-$GUESS_DOMAIN}"
-    [ -n "$NAME" ] && [ -n "$DOMAIN" ] || { echo "init: both are required — re-run: knowledge.sh init" >&2; exit 1; }
+    # Env overrides (COPILOT_NAME / COPILOT_ORG_DOMAIN) exist for agent-driven
+    # installs, which have no terminal to answer prompts in.
+    GUESS_NAME="${COPILOT_NAME:-$(git config user.name 2>/dev/null || true)}"
+    GUESS_DOMAIN="${COPILOT_ORG_DOMAIN:-$(git config user.email 2>/dev/null | sed -n 's/.*@//p' || true)}"
+    # A noreply address is not an org: accepting it silently classifies every
+    # attendee as external, and doctor used to bless the result. No default is
+    # better than a wrong one.
+    case "$GUESS_DOMAIN" in *noreply*) GUESS_DOMAIN="" ;; esac
+    if [ "${1:-}" = "--yes" ] || [ ! -t 0 ]; then
+      # Non-interactive: take the defaults the prompts would have displayed.
+      # (`read` under set -e dies on EOF — this path used to exit 1 at the
+      # first prompt, stranding exactly the agent installs AGENTS.md targets.)
+      NAME="$GUESS_NAME"; DOMAIN="$GUESS_DOMAIN"
+    else
+      printf 'What is your name (as attendees would say it)%s? ' "${GUESS_NAME:+ [$GUESS_NAME]}"
+      read -r NAME || true; NAME="${NAME:-$GUESS_NAME}"
+      printf 'Your organization email domain (attendees outside it count as external)%s? ' "${GUESS_DOMAIN:+ [$GUESS_DOMAIN]}"
+      read -r DOMAIN || true; DOMAIN="${DOMAIN:-$GUESS_DOMAIN}"
+    fi
+    [ -n "$NAME" ] && [ -n "$DOMAIN" ] || {
+      echo "init: USER_NAME and ORG_DOMAIN are both required and could not be derived" >&2
+      echo "(a git noreply email is rejected as an org domain). Either re-run" >&2
+      echo "interactively, or pass them: COPILOT_NAME=\"...\" COPILOT_ORG_DOMAIN=\"...\" knowledge.sh init --yes" >&2
+      exit 1
+    }
     cat > "$CONF" <<EOF
 USER_NAME="${NAME}"
 ORG_DOMAIN="${DOMAIN}"

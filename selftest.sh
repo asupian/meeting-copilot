@@ -18,6 +18,13 @@ say "the quick brown fox jumps over the lazy dog"
 say "meeting copilot self test complete"
 sleep 6
 
+# The app flushes the transcript when it exits at --duration; polling instead
+# of racing it keeps the printout below from showing an empty file on a pass.
+for _ in 1 2 3 4 5 6 7 8; do
+  grep -qi "brown fox" "$OUT" 2>/dev/null && break
+  sleep 1
+done
+
 echo "selftest: transcript contents:" >&2
 cat "$OUT" 2>/dev/null >&2
 if grep -qi "brown fox" "$OUT" 2>/dev/null; then

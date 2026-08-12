@@ -76,11 +76,31 @@ case "${1:-}" in
       echo "  1. install + log in:  https://claude.com/claude-code" >&2
       echo "  2. come back and run: copilot onboard knowledge" >&2
       echo "" >&2
+    elif ! "$ROOT/cli/doctor.sh" --probe 2>/dev/null | grep -q "ok    claude live probe"; then
+      # The CLI is installed but a real call fails (expired OAuth refresh, dead
+      # network). `claude auth status` cannot catch this — it reads local state
+      # and keeps saying loggedIn:true. Without the probe, onboarding burns the
+      # wizard on a dead brain and the failure surfaces as three unrelated-
+      # looking errors downstream.
+      KSTATE=claude-dead
+      echo "" >&2
+      echo "STOP: the claude CLI is installed but a live call FAILED — the brain cannot" >&2
+      echo "answer, so the knowledge wizard would die mid-session. Most common cause is an" >&2
+      echo "expired login:  claude auth login   then re-run:  copilot onboard knowledge" >&2
+      echo "" >&2
     elif [ ! -f "$CONF" ]; then
       # set -e would abort onboarding mid-way if the wizard exits non-zero,
       # dropping the user out with no summary and no idea where they stand.
       # Catch it, keep going, and report it at the end instead.
-      "$ROOT/portable/knowledge.sh" setup || KSTATE=wizard-failed
+      if [ -t 0 ]; then
+        "$ROOT/portable/knowledge.sh" setup || KSTATE=wizard-failed
+      else
+        # The wizard is an interactive claude session only a human at a real
+        # terminal can hold. Headless (an agent driving), exec-ing it would
+        # die and set -e would kill the whole install — defer it instead.
+        echo "no terminal — knowledge wizard deferred; the build continues." >&2
+        echo "HUMAN: run in your own terminal when ready:  copilot onboard knowledge" >&2
+      fi
       # The wizard writes the config, and common.sh sourced it before it existed.
       if [ -f "$CONF" ]; then
         # shellcheck disable=SC1090
@@ -133,6 +153,13 @@ case "${1:-}" in
         echo "NOT READY — capture binaries are built, but there is no brain and no knowledge base." >&2
         echo "  1. install + log in:  https://claude.com/claude-code" >&2
         echo "  2. then run:          copilot onboard knowledge" >&2
+        exit 1
+        ;;
+      claude-dead)
+        echo "NOT READY — the claude CLI is installed but a live call fails (expired login" >&2
+        echo "or dead network); every brain call would fail the same way at meeting time." >&2
+        echo "  1. re-login:  claude auth login    (verify: copilot doctor --probe)" >&2
+        echo "  2. then run:  copilot onboard knowledge" >&2
         exit 1
         ;;
       wizard-failed)

@@ -26,7 +26,7 @@ import { readFileSync, readdirSync, existsSync, watch, appendFileSync, writeFile
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadSystem, streamBrain, brainInFlight, partialString, buildCheckUser, CONFIG, USER_NAME, CARD_TYPES } from "./lib.mjs";
+import { loadSystem, streamBrain, brainInFlight, partialString, buildCheckUser, capSummary, CONFIG, USER_NAME, CARD_TYPES, CARD_CAPS } from "./lib.mjs";
 import { parseFacts, matchGuard, matchWindow } from "./matcher.mjs";
 import { makeAmbient, finishAmbient } from "./ambient.mjs";
 import { makeRecall } from "./recall.mjs";
@@ -55,8 +55,8 @@ const CONTRACT = val("--contract", join(HERE, "contract.md"));
 const PORT = Number(val("--port", 8787));
 const DEBOUNCE_MS = Number(val("--debounce", 900));
 const MAX_WAIT_MS = Number(val("--max-wait", 15)) * 1000;
-const CAP = Number(val("--cap", 20));   // opine freely; the model is still the bar
-const MIN_GAP_SEC = Number(val("--min-gap", 0));  // removed by default — the model self-limits
+const CAP = Number(val("--cap", CARD_CAPS.live.cap));   // opine freely; the model is still the bar
+const MIN_GAP_SEC = Number(val("--min-gap", CARD_CAPS.live.minGapSec));  // removed by default — the model self-limits
 const MODEL = val("--model", null);
 // null = inherit the model default (thinking on). --think 0 disables it: much
 // faster to first word, but only usable with a contract that makes the model do
@@ -261,6 +261,18 @@ let lastNow = null;            // latest {topic, speakers, slides, goal, bearing
 let adoptedSlides = "";        // pinned slide-summary wording for the current screen
 let adoptedSlidesAt = 0;
 const surfaced = [];
+
+// Token-overlap similarity for the mid-flight dedup: cheap, no model call.
+// Shared ≥4-char tokens over the smaller card's token set; 0.5 splits the
+// observed dup pair (~0.58) from unrelated cards (near 0) with margin.
+function similarCards(a, b) {
+  const toks = (s) => new Set(String(s).toLowerCase().match(/[a-z0-9$%]{4,}/g) || []);
+  const A = toks(a), B = toks(b);
+  if (!A.size || !B.size) return false;
+  let shared = 0;
+  for (const t of A) if (B.has(t)) shared++;
+  return shared / Math.min(A.size, B.size) >= 0.5;
+}
 const cardTimes = [];
 // Per-call numbers ONLY — no transcript, no prompt text, no questions. trace.jsonl
 // carries the prompts and is deleted at shutdown with the transcript; this array
@@ -387,6 +399,12 @@ async function check() {
 
   const userPrompt = buildUser(lines);
   const callsAtStart = brainInFlight();
+  // The shown-cards dedup list was snapshotted into userPrompt above — a card
+  // surfaced by an OVERLAPPING call (peak 2 concurrent) is invisible to this
+  // one. Remember where the list stood so the emission path can compare
+  // against anything added mid-flight (seen 2026-08-11: three near-identical
+  // Albatross cards inside 4 minutes once faster calls raised throughput).
+  const surfacedAtStart = surfaced.length;
   // try/finally, not a bare assignment after the await: if the call throws (or
   // ever hangs again) inFlight must still clear. Leaving it stuck true is what
   // silently ends the meeting's brain — every later check returns at the guard
@@ -411,12 +429,12 @@ async function check() {
     });
   } catch (e) {
     console.error(`brain: model call THREW — ${e?.message || e}`);
-    result = { json: null, raw: "", failed: true, timedOut: false, firstTokenMs: null, totalMs: null };
+    result = { json: null, raw: "", failed: true, timedOut: false, error: e?.message || null, firstTokenMs: null, totalMs: null };
   } finally {
     inFlight = false;
     lastCheckDoneAt = Date.now();
   }
-  const { json: parsed, raw, failed, timedOut, firstTokenMs, totalMs } = result;
+  const { json: parsed, raw, failed, timedOut, error, firstTokenMs, totalMs } = result;
 
   // Every check, one line: prompt size, latency, how many cards were riding in
   // the prompt, and how many model calls were already running. This is the set
@@ -424,6 +442,7 @@ async function check() {
   const perf = {
     atSec: nowPre,
     promptChars: userPrompt.length,
+    outputChars: raw.length,
     surfacedCount: surfaced.length,
     callsAtStart,
     firstTokenMs,
@@ -469,7 +488,7 @@ async function check() {
 
   traceCheck({ atSec: nowPre, canShow, userPrompt, raw, action: json?.action ?? null, question: json?.question, type: json?.type, perf });
 
-  if (json?.summary) rollingSummary = json.summary;
+  if (json?.summary) rollingSummary = capSummary(json.summary);
   // Live readout: current topic, confirmed speakers, goal bearing. Arrives with
   // every response, silent ones included, so the panel tracks the conversation
   // even when no card clears the bar.
@@ -495,9 +514,16 @@ async function check() {
 
   if (json?.action === "card" && json.question) {
     const now = elapsedSec();
-    if (!canShow) {
-      // Nothing was streamed, so nothing to retract — just log why it was held.
-      console.error(`brain: ${json.type || "untyped"} card suppressed (${withinGap ? `${gapSec > MIN_GAP_SEC ? "feedback " : ""}min-gap ${gapSec}s` : `cap ${CAP}/30min`}): ${json.question.slice(0, 50)}`);
+    const dupMidFlight = surfaced.slice(surfacedAtStart).some((c) => similarCards(c.question, json.question));
+    if (!canShow || dupMidFlight) {
+      if (dupMidFlight) {
+        console.error(`brain: card suppressed (near-dup surfaced mid-flight): ${json.question.slice(0, 50)}`);
+        // Unlike the pre-gated cases, canShow streamed a partial — retract it.
+        if (canShow) broadcast({ type: "silent" });
+      } else {
+        // Nothing was streamed, so nothing to retract — just log why it was held.
+        console.error(`brain: ${json.type || "untyped"} card suppressed (${withinGap ? `${gapSec > MIN_GAP_SEC ? "feedback " : ""}min-gap ${gapSec}s` : `cap ${CAP}/30min`}): ${json.question.slice(0, 50)}`);
+      }
     } else {
       // Which channel found the anchor: a recall fact's kw/vec/kw+vec, or the
       // prep pack when the source doesn't trace to the recall working set.

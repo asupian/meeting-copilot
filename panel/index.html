@@ -312,6 +312,7 @@ let capturing = null;   // null until the first capture heartbeat
 let screenOn = false;   // screentap alive: slides/screen text feeding the brain
 let thinking = false;
 let brainDown = false;  // the model call died (auth/network) — must never look like a quiet meeting
+let brainReason = "";   // the model's own words for why ("Not logged in …"), when it gave any
 
 // The dot tells the truth about AUDIO, not about the socket:
 //   red pulsing  = capture is not running / nothing heard — the failure to catch
@@ -321,7 +322,7 @@ let brainDown = false;  // the model call died (auth/network) — must never loo
 function render() {
   if (brainDown) {
     dot.className = "nocap";
-    statusEl.textContent = "brain unreachable — check `claude` login / network";
+    statusEl.textContent = brainReason ? `brain down — ${brainReason}` : "brain unreachable — check `claude` login / network";
     statusEl.className = "warn";
     return;
   }
@@ -386,7 +387,7 @@ es.onmessage = (e) => {
     return;
   }
 
-  if (m.type === "brainDown") { brainDown = true; thinking = false; render(); return; }
+  if (m.type === "brainDown") { brainDown = true; brainReason = m.reason || ""; thinking = false; render(); return; }
   if (m.type === "thinking") { brainDown = false; setState("thinking"); return; }
 
   if (m.type === "partial") {

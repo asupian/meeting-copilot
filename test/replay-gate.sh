@@ -16,6 +16,12 @@ set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 OUT="$(mktemp -d)/cards.jsonl"
 
+# Preflight: with a dead claude login the gate fails as "no cards emitted",
+# which reads as a brain regression and sends you debugging the wrong layer
+# (seen 2026-08-11: expired OAuth refresh while `auth status` said loggedIn).
+("$DIR/../cli/doctor.sh" --probe 2>/dev/null || true) | grep -q "ok    claude live probe" \
+  || { echo "GATE ABORT: claude CLI cannot complete a live call — fix login first (claude auth login; verify: copilot doctor --probe)" >&2; exit 2; }
+
 node "$DIR/../brain/brain-loop.mjs" \
   --replay "$DIR/fixtures/rivertech/fixture.jsonl" \
   --prep "$DIR/fixtures/rivertech/prep-pack.md" \

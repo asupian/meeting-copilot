@@ -50,6 +50,6 @@ case "${1:-help}" in
   prep)    shift; exec "$DIR/prep/prep.sh" "$@" ;;
   live)    shift; exec "$DIR/live/live.sh" "$@" ;;
   config)  shift; config_cmd "$@" ;;
-  doctor)  exec "$DIR/cli/doctor.sh" ;;
+  doctor)  shift; exec "$DIR/cli/doctor.sh" "$@" ;;
   *)       usage ;;
 esac

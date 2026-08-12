@@ -71,9 +71,17 @@ say "capture binaries — ok"
 # declining just means re-approving permissions after each rebuild.
 if security find-identity -v -p codesigning 2>/dev/null | grep -qE "meeting-copilot-dev|jarvis-dev"; then
   say "signing cert — ok (found)"
-elif [ -t 0 ]; then
-  printf 'No signing cert found. Create a self-signed "meeting-copilot-dev" cert in your\nlogin keychain so permissions survive rebuilds? [Y/n] ' >&2
-  read -r REPLY
+else
+  if [ -t 0 ]; then
+    printf 'No signing cert found. Create a self-signed "meeting-copilot-dev" cert in your\nlogin keychain so permissions survive rebuilds? [Y/n] ' >&2
+    read -r REPLY
+  else
+    # Headless (an agent driving the install): create the cert anyway. Falling
+    # back to ad-hoc here would mint a new TCC identity on every rebuild — the
+    # exact permissions churn the cert exists to prevent.
+    say "no terminal — creating the meeting-copilot-dev cert unattended (permissions must survive rebuilds)."
+    REPLY=Y
+  fi
   case "${REPLY:-Y}" in
     [Yy]*|"")
     CERTTMP="$(mktemp -d)"
@@ -109,8 +117,6 @@ CNF
     ;;
     *) say "skipped — ad-hoc signing (permissions will re-prompt after rebuilds)." ;;
   esac
-else
-  say "note: no signing cert and not a terminal — ad-hoc signing (permissions will re-prompt after rebuilds)."
 fi
 
 # ---------- 5. app bundles ----------
