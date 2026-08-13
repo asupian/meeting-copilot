@@ -1,25 +1,28 @@
 # meeting-copilot
 
-I kept leaving meetings realising the answer had been sitting in my notes the
-whole time. This fixes that.
+Let's be real: you've walked out of a meeting and realised the answer was in
+your notes the whole time. Someone quoted a wrong number and you nodded along,
+because you couldn't dig up the right one fast enough.
 
-It listens, reads the shared screen, and when the room says something your notes
-contradict, it hands you one question. Not advice. A question you can ask out
-loud. Most meetings it says nothing, which is fine: it only speaks when it can
-point at something you already wrote down.
+This fixes that.
 
-Audio and video never leave your Mac, nothing is recorded, and the thinking runs
-on your existing Claude Code login.
+It listens, watches the shared screen, and when the room says something your
+notes contradict, it hands you one question. Not advice, not a summary. A
+question you can ask out loud. Most meetings it says nothing, which is the
+point: it only speaks when it can cite something you wrote down.
 
-![The panel, mid-meeting](docs/panel.png)
+It's not a recorder either. Audio and video never leave your Mac, nothing is
+saved, and no bot with a weird name joins your call. Only you see it.
+
+![The panel](docs/panel.png)
 
 ## What you need
 
-A Mac on macOS 26 or later, because Apple's on-device transcriber ships with
-26. Claude Code, logged in, any paid plan. And a folder of notes, the real
-requirement: no notes, nothing to cite, silence.
+A Mac on macOS 26 or later, since Apple's on-device transcriber ships with 26.
+Claude Code, logged in, any paid plan. And a folder of notes, the real
+requirement: no notes, nothing to cite, and it stays silent.
 
-## Install
+## Getting it running
 
 ```bash
 git clone https://github.com/asupian/meeting-copilot.git
@@ -28,11 +31,11 @@ cd meeting-copilot
 ```
 
 Ten minutes, mostly waiting. It compiles while a short Claude session asks
-where your notes live (Obsidian, Notion, any folder) and makes them searchable.
-macOS asks permission twice; click Allow both times. Then it briefs itself on
-your calendar.
+where you keep your notes (Obsidian, Notion, any folder) and makes them
+searchable. macOS asks permission twice; click Allow. Then it preps a briefing
+per calendar meeting.
 
-Using an AI agent? Point it at [AGENTS.md](AGENTS.md).
+Installing with an AI agent? Point it at [AGENTS.md](AGENTS.md).
 
 ## Using it
 
@@ -41,109 +44,97 @@ Using an AI agent? Point it at [AGENTS.md](AGENTS.md).
 ```
 
 A small panel floats over the call. A card gives you the question, the fact
-behind it, and a link to its source file. Thumbs-down makes it pickier, now and
-later.
+behind it, and a link to its source file. Thumb it down and it gets
+pickier, now and in every meeting after.
 
-Ctrl-C ends it. You get a digest of commitments and unanswered questions,
-written into your notes. The transcript is deleted.
+Ctrl-C when you're done. You get a digest of who promised what and what nobody
+answered, dropped into your notes. The transcript is deleted.
 
-```bash
-./copilot prep list      # upcoming meetings, numbered
-./copilot prep 2         # rebuild briefing 2
-```
+Briefings rebuild with `./copilot prep list`, then `./copilot prep 2`. No
+calendar? Describe it: `./copilot prep --text "1:1 with Dana, pricing"`.
 
-No calendar? `./copilot prep --text "1:1 with Dana, pricing"`.
+## What it flags
 
-## The three cards
+- **red, collision.** The room contradicts your records. Wrong number, wrong
+  date, wrong owner, a settled decision getting reopened.
+- **amber, gap.** Something's missing before everyone moves on. Your goal never
+  came up, your question got dropped, a blocker nobody raised.
+- **green, reinforce.** A fact worth tabling, or a win nobody noticed.
 
-- **red, collision.** The room contradicts your records: wrong number, wrong
-  date, wrong owner, a settled decision reopened.
-- **amber, gap.** Something's missing before the room moves on: your goal
-  untouched, your question dropped, a blocker unraised.
-- **green, reinforce.** A fact worth tabling, or a win nobody named.
-
-One at a time, red beats amber beats green. No fact, no card.
+One card at a time, and red beats amber beats green. No fact, no card.
 
 ## Privacy
 
 Audio and pixels stay on your Mac. Text doesn't: transcript lines, slide text
 and facts from your notes go to Anthropic on every call, same as any Claude
-Code session. Don't point this at a folder you can't send to a model. Tag a
-fact `[SENSITIVE]` and it hides while outsiders are present. Transcript and
-logs are deleted at the end; the digest and votes survive.
+Code session. Don't point this at a folder you couldn't send to a model. Tag a
+fact `[SENSITIVE]` and it hides while outsiders are around. Transcripts and
+logs are deleted at the end.
 
 ## FAQ
 
-**What does it cost, and which plan?** It rides your Claude Code subscription.
-One model call per beat of conversation, one at a time, 10 to 25 seconds each.
-Busy hour, call it 100 to 250 calls, though that's my estimate from the timing,
-not a measurement; `perf.json` has your real number. Pro covers a couple of
-meetings a day. If Claude Code is your main tool already, get Max.
+**What's this going to cost me?** Nothing extra, it runs on your Claude Code
+subscription. One model call per beat of conversation, one at a time, 10 to 25
+seconds each, so a busy hour is roughly 100 to 250 calls. That's my math from
+the timing, not a measurement; your real number is in `perf.json`. Pro handles
+a couple of meetings a day. If it's already your main tool, get Max.
 
-**Will I run out mid-meeting?** Maybe, on a heavy day. It fails loudly: the
-panel says "brain unreachable" and capture keeps running, so you still get the
-digest.
+**Will it die mid-meeting?** Maybe, on a heavy day. It fails loudly: the panel
+says "brain unreachable" and capture keeps going, so you still get the digest.
 
 **Do I have to tell people?** I'm not a lawyer, but "it deletes itself
-afterwards" is no defence: wiretap law is about the listening, not the file. In
-California, Illinois, Washington and others, assume everyone has to agree, and
-your employer likely has a policy. One sentence up front covers it: *"I run a
-local assistant that checks my notes against what we're saying. Nothing is
-recorded."*
+afterwards" is not a defence: wiretap law cares about the listening, not the
+file. In California, Illinois, Washington and others, assume everyone has to
+agree. One sentence up front handles it: *"I run a local assistant that checks
+my notes against what we're saying. Nothing is recorded."*
 
-**Does my meeting text train the model?** Your setting, not my promise to make.
+**Is my meeting text training the AI?** Your setting, not my promise to make.
 Pro and Max train on your sessions unless you opt out under Settings, Privacy.
 Team, Enterprise and API don't.
 
-**Will it show when I share my screen?** Only if you share the whole desktop.
+**Do I need `qmd` and `gws`?** Neither, though
+[qmd](https://github.com/tobi/qmd) is worth it: without that index a card can
+only quote the briefing built beforehand, instead of searching your notes live.
+`gws` is my own Google Workspace CLI, not public, and it only reads your
+calendar. Skip it, use `prep --text`.
 
-**Do I need `qmd` and `gws`?** No, though [qmd](https://github.com/tobi/qmd)
-is worth it: without that index a card can only quote the briefing built
-beforehand, instead of searching your notes live. `gws` is my own Google
-Workspace CLI, not public, and all it does here is read your calendar. Skip it
-and use `prep --text`.
+**Which apps? Will people see it?** Zoom's app, or a browser window titled as a
+Meet, Zoom, Webex or Teams call; anything else just costs you the slides strip.
+English only for now. It shows on a screen share only if you share your whole
+desktop.
 
-**Which apps, which language?** Zoom's app, or a browser window titled as a
-Meet, Zoom, Webex or Teams call. Anything else just costs you the slides strip.
-English only for now, hardcoded in `capture/meetingtap.swift`.
-
-**Cards take 6 to 15 seconds. Too slow?** For rapid-fire standups, yes.
+**Cards take 6 to 15 seconds. Too late?** For rapid-fire standups, yeah.
 Otherwise no: topics run for minutes, not seconds.
 
-**How should my notes look?** Plain markdown in a folder.
-`./copilot onboard knowledge` reads what you have and never touches the
+**How do my notes need to be organised?** Plain markdown in a folder.
+`./copilot onboard knowledge` reads whatever you've got and never touches the
 original. Notion needs no API token, just export to markdown and point at it.
 Layout: [portable/KNOWLEDGE.md](portable/KNOWLEDGE.md). Thin notes means few
-cards, maybe none. Working as intended.
+cards, maybe none. That's intended.
 
 **Can I stop it writing into my notes?** `--no-staging`, or move the root with
 `--knowledge <path>`. It never overwrites.
 
-**Where's the push-to-talk key?** There isn't one. "hold to talk" is a button
+**Where's the push-to-talk key?** There isn't one, it's a "hold to talk" button
 on the panel. On speakers your mic picks up you *and* a mangled echo of
 everyone else, so you mark your own turns by holding it. Use `--headphones` on
-headphones, `--room` in person. Worst case is headphones without the flag:
-everything you say is thrown away.
+headphones, `--room` in person. Get it wrong on headphones and everything you
+say gets thrown out.
 
-**Defaults?** 20 cards per 30 minutes (`--cap`), no forced gap (`--min-gap`),
-900ms of quiet before it thinks. The quiet comes from the grounding rule and
-your thumbs-down, not the cap.
-
-**How do I remove it?** Delete `~/.meeting-copilot` and the repo folder, then
-drop meetingtap and screentap from System Settings, Privacy & Security. If
+**How do I get rid of it?** Delete `~/.meeting-copilot` and the repo folder,
+then drop meetingtap and screentap from System Settings, Privacy & Security. If
 setup made a cert: `security delete-certificate -c "meeting-copilot-dev"
-~/Library/Keychains/login.keychain-db`. Nothing else was installed.
+~/Library/Keychains/login.keychain-db`. Nothing else was touched.
 
-**Is anyone maintaining this?** I built it for my own meetings and put it up
-because it works. Issues and PRs welcome, no promises on timing. Two rules for
-a PR: no dependencies ever, and anything touching `brain/` passes the replay
-gate.
+**Is anyone actually maintaining this?** I built it for my own meetings and put
+it up because it works. Issues and PRs welcome, no promises on timing. Two PR
+rules: no dependencies, and `brain/` changes pass the replay gate.
 
 ## More
 
-[HOW-IT-WORKS.md](HOW-IT-WORKS.md) is the mechanism end to end,
-[portable/README.md](portable/README.md) the notes layer,
-[.claude/CLAUDE.md](.claude/CLAUDE.md) the maintainer rules.
+[HOW-IT-WORKS.md](HOW-IT-WORKS.md) is the mechanism,
+[portable/README.md](portable/README.md) the notes layer.
 
-Other flags: `--no-screen`, `--no-vision`, `--no-recall`, `--keep-session`,
-`--externals`, `--prep <file>`. Broken? `./copilot doctor` takes two seconds.
+Flags: `--cap` (20 per 30 min), `--min-gap` (0), `--no-screen`,
+`--no-vision`, `--no-recall`, `--keep-session`, `--externals`, `--prep`.
+Broken? `./copilot doctor` takes two seconds.
