@@ -1,4 +1,4 @@
-# meeting-copilot
+# Meeting Copilot
 
 A tool that listens, watches the shared screen, and when the room says something your
 notes contradict, it hands you one question. 
