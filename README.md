@@ -9,6 +9,11 @@ Everything heavy happens on your Mac: audio and screen become text on-device,
 nothing is recorded, and the reasoning runs through your existing Claude Code
 login. No API key, no accounts, no dependencies to install.
 
+![The panel mid-meeting: one card, the fact it rests on, and the live strips underneath](docs/panel.png)
+
+**Questions before you install — cost per meeting, consent, what breaks
+without the optional pieces, how to uninstall? Jump to the [FAQ](#faq).**
+
 **Setting this up with an AI agent? Point it at [AGENTS.md](AGENTS.md) —
 it has the exact steps and knows which parts need a human.**
 
@@ -30,12 +35,16 @@ it has the exact steps and knows which parts need a human.**
 
 ## What you need
 
-A Mac on macOS 26 or newer, [Claude Code](https://claude.com/claude-code)
-installed and logged in, and about 10 minutes.
+A Mac on macOS 26 or newer (the on-device transcriber ships with 26 — this is
+a hard stop), [Claude Code](https://claude.com/claude-code) installed and
+logged in on any paid plan, a folder of notes worth citing, and about 10
+minutes.
 
 ## Install
 
 ```bash
+git clone https://github.com/asupian/meeting-copilot.git
+cd meeting-copilot
 ./copilot onboard
 ```
 
@@ -100,6 +109,115 @@ Every card cites a specific fact from your files — no fact, no card.
 Each meeting's logs live in `~/.meeting-copilot/sessions/<timestamp>/`. The
 self-test (`./selftest.sh`) proves the audio tap live. If the panel says
 "brain unreachable", your `claude` login or network died mid-meeting.
+
+## FAQ
+
+**What does it cost me per meeting?** It runs on your Claude Code
+subscription — no API key, no separate billing. One `claude -p` call per
+conversational beat, one at a time, each ~10–25s. A busy hour is roughly
+100–250 calls (estimated from the cadence, not measured). Read your real
+numbers after a meeting: `perf.json` in the session dir holds call count and
+prompt size, and no meeting content.
+
+**Which plan, and which model?** Any paid plan. Pro is fine for a couple of
+meetings a day; if Claude Code is already your main work tool, you want Max.
+The model is whatever your Claude Code default is — the live path passes no
+`--model`. Extended thinking stays on: it is the ~6–15s latency floor, and
+it's what makes the model cross-reference instead of pattern-match.
+
+**Will I hit a rate limit mid-meeting?** Possibly, on a heavy day. It fails
+loud, not silent: the panel shows "brain unreachable" and capture keeps
+running, so you still get the digest. `--cap 8` and `--min-gap 120` put a
+hard ceiling on one meeting.
+
+**Do I have to tell people?** This is not legal advice, and "it deletes
+itself" is not a defense. Wiretap law is about intercepting, not keeping the
+file, and two-party-consent states (CA, FL, IL, PA, WA and others) read as
+everyone consents. Most employers also have a policy. One sentence up front
+covers it: *"I run a local assistant that reads my own notes against the
+conversation. Nothing is recorded or stored."*
+
+**Is my meeting text used for training?** Your account setting, not ours to
+promise. Consumer plans (Free/Pro/Max) train on chats and coding sessions
+unless you opt out; Team, Enterprise and API do not, by default. Check
+Settings → Privacy before your first real meeting. Note what leaves the Mac:
+audio and pixels stay on-device, but transcript excerpts, slide text and
+facts from your notes go to Anthropic on every call.
+
+**Will it show on a screen share?** Yes, if you share the whole desktop.
+Share the meeting-app window instead and it won't.
+
+**What are `gws` and `qmd`? Do I need them?** Neither is required.
+[`qmd`](https://github.com/tobi/qmd) is a local search index — without it,
+cards can only cite the briefing built before the meeting, not your whole
+notes folder searched live. Worth installing. `gws` is a personal Google
+Workspace CLI, **not a public tool** — its only job is reading your calendar
+for `prep list`. Skip it and describe the meeting yourself:
+`./copilot prep --text "1:1 with Dana — renewal pricing"`. A bare title is a
+complete input. `./copilot onboard integrations` shows what's connected.
+
+What you cannot skip is notes. No notes, nothing to cite, silent all meeting.
+
+**Which meeting apps?** The Zoom app, or any browser window titled as a
+Google Meet, Zoom, Webex or Teams call. Unsupported apps cost you the SLIDES
+strip, not the copilot — `--no-screen` and everything else still runs.
+
+**English only?** Yes. The transcriber is pinned to `en_US` in
+`capture/meetingtap.swift`. A one-line change, untested elsewhere.
+
+**Isn't a 6–15s card too late?** For fast round-robin standups, yes — don't
+run it there. Meeting topics run minutes, not seconds, so 12 seconds into a
+pricing argument the room is still on pricing. A 2-second card that
+pattern-matches "sounds risky" is noise you'd learn to ignore.
+
+**What shape do my notes need to be in?** Plain markdown in a folder;
+`./copilot onboard knowledge` distills what you already have without
+modifying it, and auto-detects Obsidian vaults. Notion needs no API token —
+export to Markdown and point the wizard at the export. Two rules from
+[portable/KNOWLEDGE.md](portable/KNOWLEDGE.md) carry most of the value: facts
+you want cited live go in a truth-tier file (recall injects max 5, max 2 from
+context tier), and a person's `profile.md` matches only on exact keywords —
+facts you want caught by meaning go in their `evidence.md`.
+
+**Can I stop it writing digests into my notes?** `--no-staging` keeps the
+digest on screen and writes nothing back. `--knowledge <path>` (or
+`KNOWLEDGE_DIR` in `~/.meeting-copilot/config`) moves the whole root. Nothing
+is ever overwritten.
+
+**What if my notes are thin?** Few cards, possibly zero. That's the design —
+no fact, no card. Stale is caught explicitly: `prep` and `live` warn once the
+knowledge dir passes 7 days. `./portable/knowledge.sh sync` tops it up.
+
+**What's the push-to-talk key?** There's no key — `hold to talk` is a button
+on the panel. Your mic is the messy channel: on speakers it hears you *and* a
+garbled echo of everyone else, so you mark your own turns. Three modes, and
+picking wrong degrades rather than crashes:
+
+| Mode | When | The mic means |
+|---|---|---|
+| push-to-talk (default) | call on speakers | you, only while you hold the button |
+| `--headphones` | call on headphones | always you |
+| `--room` | in person, no call | everyone, never attributed to you |
+
+On headphones without `--headphones`, everything you say is silently dropped.
+On speakers with it, the echo gets labelled as you.
+
+**What are the defaults?** `--cap 20` cards per 30 min, `--min-gap 0`
+(the model self-limits), 900ms beat debounce, 15s max mid-monologue. Quiet
+comes from the grounding rule and your 👎 votes, which tighten the bar for the
+rest of the meeting and seed the next one. Votes only tighten, never loosen.
+
+**How do I uninstall it?** `rm -rf ~/.meeting-copilot` and the repo folder
+(the built app bundles live inside it), then remove `meetingtap` and
+`screentap` from System Settings → Privacy & Security. If `setup.sh` made a
+cert: `security delete-certificate -c "meeting-copilot-dev"
+~/Library/Keychains/login.keychain-db`. No daemons, no `/Applications` entry,
+no npm packages.
+
+**Is this maintained? Are PRs welcome?** Built for one person's daily
+meetings, shared because it works. Issues and PRs welcome, no SLA. Two hard
+rules if you send one: zero dependencies, ever; and any change under `brain/`
+or to a contract needs `./test/replay-gate.sh` to pass.
 
 ## Going deeper
 

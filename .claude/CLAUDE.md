@@ -2,19 +2,20 @@
 
 Live meeting copilot: sits in a meeting, transcribes on-device (Swift), and a
 Node brain running `claude -p` surfaces ONE grounded question at a time on a
-floating panel. Extracted from a private repo for public release; not yet
-generic, not yet published.
+floating panel.
 
-Read first: [README.md](../README.md) (operations), [HOW-IT-WORKS.md](../HOW-IT-WORKS.md)
+Read first: [README.md](../README.md) (operations + the user-facing FAQ),
+[HOW-IT-WORKS.md](../HOW-IT-WORKS.md)
 (mechanisms + design principles), [portable/README.md](../portable/README.md)
 (the knowledge layer).
 
 ## Hard rules
 
-1. **Private remote only.** The scrub is done and the owner decided
-   (2026-07-21): the repo lives on a PRIVATE GitHub remote. Never make it
-   public or push its content anywhere else without the owner's explicit
-   say-so.
+1. **Public repo — nothing personal in the tree.** No secrets, no absolute
+   home paths, no employer domains, hostnames or internal URLs, in code,
+   docs or comments. Identity is runtime config
+   (`~/.meeting-copilot/config`), never committed. Placeholders in contracts
+   stay placeholders.
 2. **The regression gate.** Any change to `brain/` or a contract lands only
    after `test/replay-gate.sh` passes (real model call, ~30-60s). Baseline:
    1 card at 0:35 citing the $42,500 SOW anchor.
@@ -23,7 +24,7 @@ Read first: [README.md](../README.md) (operations), [HOW-IT-WORKS.md](../HOW-IT-
    question, never the user's position.
 4. **Don't touch the TCC/signing design casually** (capture/, build-app.sh):
    app-bundle launch + stable cert is hard-won; regressions cost silent
-   permission failures. See README "Signing & permissions".
+   permission failures. See `setup.sh` step 4 and `capture/build-app.sh`.
 5. **Zero dependencies stays.** The brain is plain Node, the panel plain
    HTML, capture plain Swift. No npm packages, no frameworks.
 6. **The knowledge dir is the contract.** Layout/tiers in

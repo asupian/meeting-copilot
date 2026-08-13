@@ -97,6 +97,10 @@ Model calls are killed after `COPILOT_CALL_TIMEOUT_MS` (default 90s).
   regexes) are a matched pair — change both or neither.
 - Do not touch the signing/permissions design in `capture/` and
   `capture/build-app.sh` — a wrong move silently breaks macOS permissions.
-- This repo is private. Do not push its contents anywhere else.
+- This is a public repo. Never commit secrets, absolute home paths, or an
+  employer's internal hostnames, domains or URLs. Real identity belongs in
+  `~/.meeting-copilot/config`, which is outside the repo.
 
-Maintainer-level context: `.claude/CLAUDE.md`. Mechanisms: `HOW-IT-WORKS.md`.
+Common user questions (cost, consent, uninstall, defaults): the FAQ section of
+`README.md`. Maintainer-level context: `.claude/CLAUDE.md`. Mechanisms:
+`HOW-IT-WORKS.md`.
