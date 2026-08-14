@@ -45,7 +45,7 @@ brain/     Node: live.mjs (check loop) + server.mjs (HTTP/SSE) + feedback.mjs
 panel/     floating NSPanel + index.html (the whole UI)
 portable/  knowledge layer: format spec, intake wizard, import/sync/pack prompts
 docs/      README assets (panel screenshot)
-media/     README demo: demo.gif (inline autoplay) + demo.mp4 + poster
+media/     demo.mp4 — source of record for the README's embedded player
 test/      replay-gate.sh + trigger-checks.sh (model-cost) · live-checks.sh +
            unit.sh + shim/claude (deterministic, zero-cost) · fixtures
 ```
@@ -100,7 +100,8 @@ test/      replay-gate.sh + trigger-checks.sh (model-cost) · live-checks.sh +
   pipeline: live.mjs + panel + a scripted `claude` shim (same stream-json
   contract as test/shim/claude) driving deterministic cards, in a Zoom-style
   HTML scene with the live panel iframed in. GitHub never renders committed
-  .mp4 blobs — hence the inline GIF; the mp4 link needs `?raw=true`.
+  .mp4 blobs — the README embeds a user-attachments upload (manual drag-drop
+  into a comment box; re-upload + swap the URL when the video changes).
 - Never replay fixtures by appending them to live.mjs's transcript: the
   elapsed clock anchors to the fixture's old timestamps and the model judges
   a 32-hour meeting. brain-loop.mjs / review-server.mjs are the replay paths;
