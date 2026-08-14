@@ -5,12 +5,11 @@ notes contradict, it hands you one question.
 
 Audio and video never leave your Mac, nothing is saved, and no bot joins your call. Only you see it.
 
-[![Demo](media/demo.gif)](media/demo.mp4?raw=true)
+https://github.com/user-attachments/assets/004361e2-ef1f-47e3-97b0-1caefd558269
 
-**[▶ Watch the full 90-second demo](media/demo.mp4?raw=true)** — the room
-says the load test passed, your notes say it failed, the panel hands you the
-question. *(Staged meeting, real pipeline; the model's responses are scripted
-so the demo is reproducible.)*
+**The 90-second demo** — the room says the load test passed, your notes say
+it failed, the panel hands you the question. *(Staged meeting, real pipeline;
+the model's responses are scripted so the demo is reproducible.)*
 
 ![The panel](docs/panel.png)
 
