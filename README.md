@@ -5,7 +5,7 @@ notes contradict, it hands you one question.
 
 Audio and video never leave your Mac, nothing is saved, and no bot joins your call. Only you see it.
 
-https://github.com/user-attachments/assets/004361e2-ef1f-47e3-97b0-1caefd558269
+https://github.com/user-attachments/assets/3fa01344-40a9-47f2-868a-322f234816b9
 
 **The 90-second demo** — the room says the load test passed, your notes say
 it failed, the panel hands you the question. *(Staged meeting, real pipeline;
