@@ -44,6 +44,8 @@ brain/     Node: live.mjs (check loop) + server.mjs (HTTP/SSE) + feedback.mjs
            contracts, matcher, recall, ambient, origins
 panel/     floating NSPanel + index.html (the whole UI)
 portable/  knowledge layer: format spec, intake wizard, import/sync/pack prompts
+docs/      README assets (panel screenshot)
+media/     README demo: demo.gif (inline autoplay) + demo.mp4 + poster
 test/      replay-gate.sh + trigger-checks.sh (model-cost) · live-checks.sh +
            unit.sh + shim/claude (deterministic, zero-cost) · fixtures
 ```
@@ -94,6 +96,11 @@ test/      replay-gate.sh + trigger-checks.sh (model-cost) · live-checks.sh +
   --keep-session. A dead model call broadcasts brainDown (never fake silence).
 - test/live-checks.sh + test/unit.sh are the zero-cost regression net (claude
   shimmed via test/shim/claude); run them for live.mjs/panel/lib changes.
+- The README demo (media/) is a STAGED meeting recorded through the real
+  pipeline: live.mjs + panel + a scripted `claude` shim (same stream-json
+  contract as test/shim/claude) driving deterministic cards, in a Zoom-style
+  HTML scene with the live panel iframed in. GitHub never renders committed
+  .mp4 blobs — hence the inline GIF; the mp4 link needs `?raw=true`.
 - Never replay fixtures by appending them to live.mjs's transcript: the
   elapsed clock anchors to the fixture's old timestamps and the model judges
   a 32-hour meeting. brain-loop.mjs / review-server.mjs are the replay paths;
