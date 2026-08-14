@@ -7,12 +7,6 @@ Audio and video never leave your Mac, nothing is saved, and no bot joins your ca
 
 https://github.com/user-attachments/assets/3fa01344-40a9-47f2-868a-322f234816b9
 
-**The 90-second demo** — the room says the load test passed, your notes say
-it failed, the panel hands you the question. *(Staged meeting, real pipeline;
-the model's responses are scripted so the demo is reproducible.)*
-
-![The panel](docs/panel.png)
-
 ## What you need
 
 A Mac on macOS 26 or later. Claude Code, logged in, any paid plan. 
