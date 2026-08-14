@@ -5,7 +5,7 @@ notes contradict, it hands you one question.
 
 Audio and video never leave your Mac, nothing is saved, and no bot joins your call. Only you see it.
 
-https://github.com/user-attachments/assets/027b5e8a-529a-427b-bd6a-452b66ab56b8
+https://github.com/user-attachments/assets/3fa01344-40a9-47f2-868a-322f234816b9
 
 ## What you need
 
