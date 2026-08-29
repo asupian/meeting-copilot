@@ -4,7 +4,7 @@
 
 import { readFileSync, existsSync } from "node:fs";
 import { spawn } from "node:child_process";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 // The card taxonomy, ladder order. The contract defines them; live.mjs
@@ -122,6 +122,22 @@ export const CONFIG = loadConfig();
 export const USER_NAME = CONFIG.USER_NAME || "User";
 export const ORG_DOMAIN = CONFIG.ORG_DOMAIN || "";
 
+// Which CLI is the brain: "claude" (default) or "codex" (OpenAI's CLI —
+// `codex exec` rides a ChatGPT subscription login the way `claude -p` rides
+// the Claude Code one; no API key either way). Resolution: --provider flag
+// (drivers call setProvider) > COPILOT_PROVIDER env > MODEL_PROVIDER in
+// ~/.meeting-copilot/config > claude. A typo'd provider silently running
+// claude would be dishonest, so unknown values throw at startup.
+function normProvider(p, src) {
+  const v = String(p).trim().toLowerCase();
+  if (v === "claude" || v === "codex") return v;
+  throw new Error(`unknown brain provider "${p}" (${src}) — use claude or codex`);
+}
+let PROVIDER = normProvider(process.env.COPILOT_PROVIDER || CONFIG.MODEL_PROVIDER || "claude",
+  process.env.COPILOT_PROVIDER ? "COPILOT_PROVIDER" : "MODEL_PROVIDER in config");
+export function setProvider(p) { if (p) PROVIDER = normProvider(p, "--provider"); }
+export function providerName() { return PROVIDER; }
+
 // Contracts use {{USER_NAME}} / {{ORG_DOMAIN}} placeholders — the same syntax
 // as portable/prompts — filled at load time from the config.
 export function renderTemplate(text) {
@@ -220,36 +236,109 @@ export const CALL_TIMEOUT_MS = Number(process.env.COPILOT_CALL_TIMEOUT_MS || 90_
 let inFlightCalls = 0;
 export function brainInFlight() { return inFlightCalls; }
 
-export function streamBrain({ system, user, model, onDelta, signal, thinkTokens, tools, timeoutMs = CALL_TIMEOUT_MS }) {
-  return new Promise((resolve) => {
-    const args = [
-      "-p",
-      "--system-prompt", system,
-      "--exclude-dynamic-system-prompt-sections",
-      // Both are needed: --tools "" drops the builtin toolset, --disallowedTools
-      // drops MCP servers that attach regardless. Every tool schema left in the
-      // prompt is tokens on the critical path — this is the single biggest lever
-      // on time-to-first-token. (`tools` opt-in exists for the vision pass,
-      // which needs Read to open the slide image.)
-      "--tools", tools ?? "",
-      "--disallowedTools", ...DISALLOW,
-      "--output-format", "stream-json",
-      "--include-partial-messages",
-      "--verbose",
-    ];
-    if (model) args.push("--model", model);
+export function streamBrain(opts) {
+  return PROVIDER === "codex" ? streamCodex(opts) : streamClaude(opts);
+}
 
+function streamClaude({ system, user, model, onDelta, signal, thinkTokens, tools, timeoutMs = CALL_TIMEOUT_MS }) {
+  const args = [
+    "-p",
+    "--system-prompt", system,
+    "--exclude-dynamic-system-prompt-sections",
+    // Both are needed: --tools "" drops the builtin toolset, --disallowedTools
+    // drops MCP servers that attach regardless. Every tool schema left in the
+    // prompt is tokens on the critical path — this is the single biggest lever
+    // on time-to-first-token. (`tools` opt-in exists for the vision pass,
+    // which needs Read to open the slide image.)
+    "--tools", tools ?? "",
+    "--disallowedTools", ...DISALLOW,
+    "--output-format", "stream-json",
+    "--include-partial-messages",
+    "--verbose",
+  ];
+  if (model) args.push("--model", model);
+  // Extended thinking dominates time-to-first-token (~10.5-12.9s vs ~2s), but it is
+  // what makes the model actually cross-reference the utterance against the prep
+  // pack. Turning it off with the default contract makes the loop go silent.
+  // So: inherit the default (thinking on) unless a caller explicitly opts out.
+  const env = thinkTokens == null
+    ? process.env
+    : { ...process.env, MAX_THINKING_TOKENS: String(thinkTokens) };
+  return streamCli({
+    bin: "claude", args, env, stdin: user, onDelta, signal, timeoutMs,
+    parseLine(j, io) {
+      if (j.type === "stream_event") {
+        const ev = j.event || {};
+        if (ev.type === "content_block_delta") io.delta(ev.delta?.text || "");
+      }
+      // A dead call ("Not logged in", rate limit) streams no deltas — its
+      // only explanation rides the final result event. Keep it for callers.
+      if (j.type === "result" && j.is_error) io.error(String(j.result || "").trim());
+    },
+  });
+}
+
+// The codex provider: OpenAI's CLI in non-interactive mode. Differences that
+// matter, all handled here so callers see the same contract:
+//   - no --system-prompt: the contract rides at the top of the single prompt
+//     turn (codex keeps its own agent preamble around it — unavoidable).
+//   - no token deltas in `exec --json`: the agent_message arrives complete, so
+//     onDelta fires once at the end. The panel shows the question all at once
+//     instead of typing out; firstTokenMs ≈ totalMs.
+//   - it is an agent, not a transform: read-only sandbox, --ephemeral (no
+//     session files — transcript text must never persist in ~/.codex),
+//     --ignore-user-config (the user's codex MCP servers/hooks never ride into
+//     a check), and -C into a neutral dir so no repo's AGENTS.md is loaded
+//     into the prompt (codex reads them from the working root).
+//   - `tools` (the claude Read opt-in) has no equivalent; images attach
+//     first-class via -i instead (`image` option).
+function streamCodex({ system, user, model, onDelta, signal, thinkTokens, image, timeoutMs = CALL_TIMEOUT_MS }) {
+  const args = [
+    "exec", "-",             // "-": read the prompt from stdin
+    "--json",
+    "--ephemeral",
+    "--skip-git-repo-check",
+    "--ignore-user-config",  // auth still works: it lives in CODEX_HOME, not config.toml
+    "-s", "read-only",
+    "-C", tmpdir(),
+    "--color", "never",
+  ];
+  if (model) args.push("-m", model);
+  // thinkTokens=0 is "skip extended thinking" on the claude path; the codex
+  // knob is reasoning effort. Nonzero budgets inherit codex's default.
+  if (thinkTokens === 0) args.push("-c", "model_reasoning_effort=low");
+  if (image) args.push("-i", image);
+  const stdin = system ? `${system}\n\n===== CURRENT INPUT =====\n${user}` : user;
+  return streamCli({
+    bin: "codex", args, env: process.env, stdin, onDelta, signal, timeoutMs,
+    parseLine(j, io) {
+      // Current schema (verified on codex-cli 0.150): item.completed carries
+      // the finished agent_message. item.updated + the older {msg:{...}} proto
+      // shapes are handled too so a codex upgrade degrades soft, not silent.
+      const item = j.item;
+      if ((j.type === "item.completed" || j.type === "item.updated") && item?.type === "agent_message")
+        io.final(String(item.text || ""));
+      const msg = j.msg;
+      if (msg?.type === "agent_message_delta") io.delta(String(msg.delta || ""));
+      else if (msg?.type === "agent_message") io.final(String(msg.message ?? msg.text ?? ""));
+      if (j.type === "error") io.error(String(j.message || "").trim());
+      if (j.type === "turn.failed") io.error(String(j.error?.message || "").trim());
+    },
+  });
+}
+
+// The shared child-process machinery both providers run on: spawn, feed stdin,
+// split stdout into JSONL for parseLine, and settle EXACTLY once — close,
+// error, or timeout. Everything hard-won about hangs and double-settles lives
+// here so a provider adapter is only args + line parsing.
+function streamCli({ bin, args, env, stdin, parseLine, onDelta, signal, timeoutMs }) {
+  return new Promise((resolve) => {
     const t0 = Date.now();
     let firstTokenMs = null;
     let acc = "";
-    // Extended thinking dominates time-to-first-token (~10.5-12.9s vs ~2s), but it is
-    // what makes the model actually cross-reference the utterance against the prep
-    // pack. Turning it off with the default contract makes the loop go silent.
-    // So: inherit the default (thinking on) unless a caller explicitly opts out.
-    const env = thinkTokens == null
-      ? process.env
-      : { ...process.env, MAX_THINKING_TOKENS: String(thinkTokens) };
-    const child = spawn("claude", args, { stdio: ["pipe", "pipe", "ignore"], env });
+    let errText = "";
+    let errTail = "";   // stderr tail: the only clue when a call dies without a JSON error event
+    const child = spawn(bin, args, { stdio: ["pipe", "pipe", "pipe"], env });
     inFlightCalls++;
 
     // Exactly one settle, whatever happens: close, error, or timeout. Without
@@ -271,7 +360,7 @@ export function streamBrain({ system, user, model, onDelta, signal, thinkTokens,
         // SIGKILL, not SIGTERM: the thing we are killing is already not
         // responding, and a zombie holds a model connection open.
         try { child.kill("SIGKILL"); } catch {}
-        console.error(`brain: model call TIMED OUT after ${Math.round(timeoutMs / 1000)}s — killed; ${acc.length} char(s) streamed`);
+        console.error(`brain: ${bin} call TIMED OUT after ${Math.round(timeoutMs / 1000)}s — killed; ${acc.length} char(s) streamed`);
         settle({
           json: extractJson(acc),
           raw: acc,
@@ -292,11 +381,29 @@ export function streamBrain({ system, user, model, onDelta, signal, thinkTokens,
     // an unhandled rejection, not a failed call. Swallow it — the close handler
     // is what reports the outcome.
     child.stdin.on("error", () => {});
-    child.stdin.write(user);
+    child.stdin.write(stdin);
     child.stdin.end();
 
+    const io = {
+      delta(t) {
+        if (!t) return;
+        if (firstTokenMs === null) firstTokenMs = Date.now() - t0;
+        acc += t;
+        onDelta?.(acc);
+      },
+      // A complete-message event. Only ever moves acc FORWARD: on providers
+      // that also streamed deltas the completed text is authoritative, and a
+      // shorter/equal text is a duplicate event, not a retraction.
+      final(t) {
+        if (!t || t.length <= acc.length) return;
+        if (firstTokenMs === null) firstTokenMs = Date.now() - t0;
+        acc = t;
+        onDelta?.(acc);
+      },
+      error(m) { if (m && !errText) errText = m; },
+    };
+
     let buf = "";
-    let errText = "";
     child.stdout.on("data", (d) => {
       buf += d;
       let nl;
@@ -306,22 +413,10 @@ export function streamBrain({ system, user, model, onDelta, signal, thinkTokens,
         if (!line.trim()) continue;
         let j;
         try { j = JSON.parse(line); } catch { continue; }
-        if (j.type === "stream_event") {
-          const ev = j.event || {};
-          if (ev.type === "content_block_delta") {
-            const t = ev.delta?.text || "";
-            if (t) {
-              if (firstTokenMs === null) firstTokenMs = Date.now() - t0;
-              acc += t;
-              onDelta?.(acc);
-            }
-          }
-        }
-        // A dead call ("Not logged in", rate limit) streams no deltas — its
-        // only explanation rides the final result event. Keep it for callers.
-        if (j.type === "result" && j.is_error && !errText) errText = String(j.result || "").trim();
+        parseLine(j, io);
       }
     });
+    child.stderr.on("data", (d) => { errTail = (errTail + d).slice(-300); });
 
     child.on("close", () => {
       settle({
@@ -332,11 +427,11 @@ export function streamBrain({ system, user, model, onDelta, signal, thinkTokens,
         // surface this — a dead brain must never look like a quiet meeting.
         failed: !acc.trim(),
         timedOut: false,
-        error: errText || null,
+        error: errText || (!acc.trim() && errTail.trim() ? errTail.trim().split("\n").at(-1) : null),
         firstTokenMs,
         totalMs: Date.now() - t0,
       });
     });
-    child.on("error", (e) => settle({ json: null, raw: "", failed: true, timedOut: false, error: e?.message || "claude could not be spawned", firstTokenMs: null, totalMs: Date.now() - t0 }));
+    child.on("error", (e) => settle({ json: null, raw: "", failed: true, timedOut: false, error: e?.message || `${bin} could not be spawned`, firstTokenMs: null, totalMs: Date.now() - t0 }));
   });
 }

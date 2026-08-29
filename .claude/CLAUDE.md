@@ -70,6 +70,36 @@ test/      replay-gate.sh + trigger-checks.sh (model-cost) · live-checks.sh +
   review-server replays and fixture-making need `--keep-session`.
 - Config keys added 2026-07-22: `PREP_LOOKAHEAD_H`, `KNOWLEDGE_SYNCED_AT`
   (stamped by sync; prep/live warn past 7 days), `KNOWLEDGE_MERGED_AT`.
+- Brain provider (2026-08-28): `--provider codex` / `MODEL_PROVIDER="codex"` /
+  `COPILOT_PROVIDER` env runs the brain on `codex exec` (ChatGPT subscription
+  login) instead of `claude -p`. One dispatch point: lib.mjs streamBrain →
+  streamClaude/streamCodex over a shared streamCli core (settle-once, timeout,
+  stderr tail). The WHOLE journey is provider-aware, not just live: shell
+  resolution is brain_bin() (common.sh; knowledge.sh + setup.sh carry local
+  copies — they don't source common.sh), knowledge.sh headless() branches
+  (claude --allowedTools vs codex workspace-write sandbox scoped to the
+  knowledge dir + --add-dir), interactive wizard/sync launch $(brain_bin),
+  onboarding/doctor gate on the CONFIGURED provider (knowledge_state returns
+  no-brain, not no-claude; with codex, a missing claude is a warn). Codex MCP
+  integrations are the USER'S own ~/.codex config, not claude connectors.
+  Sandboxed-HOME tests of codex paths need CODEX_HOME=~/.codex or auth 401s.
+  Codex pack build verified spec-conformant 2026-08-28 (triggers, header,
+  Numbers-on-file sections). Codex has no --system-prompt (contract rides atop the prompt
+  turn), no token deltas (onDelta fires once, cards appear whole), and gets
+  `--ephemeral -s read-only --ignore-user-config -C tmpdir` so no session
+  files persist and no repo AGENTS.md leaks into checks; vision attaches the
+  frame via `-i` instead of the Read tool. Unknown provider values throw.
+  Coverage: test/shim/codex twins test/shim/claude (same canned card, codex
+  JSONL wire); live-checks.sh reruns per provider (PROVIDER=<p> runs one) —
+  claude runs everything, the codex pass keeps only the provider-boundary
+  scenarios (wire parse + embedded-contract prompt, ambient call); the
+  downstream scenarios (feedback, cleanup, whitelist, timeout) are
+  claude_only-gated as provider-independent. `COPILOT_PROVIDER=codex
+  test/replay-gate.sh` is the codex model-cost gate — same fixture, same
+  1-card/$42,500 baseline (verified 2026-08-28 on both). Prompt greps in
+  live-checks must go through check_part: codex captures embed the contract,
+  whose TEXT names blocks like QUESTIONS STILL OPEN — a raw grep matches the
+  rulebook, not the input.
 - Detection taxonomy: cards carry `type` ∈ {collision, gap, reinforce}
   (lib.mjs CARD_TYPES; contract defines classes+modes+ladder collision > gap
   > reinforce). live.mjs whitelists — invalid/missing type = no label, never

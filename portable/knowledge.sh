@@ -1,27 +1,38 @@
 #!/bin/bash
 # knowledge.sh — build and maintain the copilot's knowledge directory.
 #
-#   knowledge.sh setup                     guided intake wizard (interactive claude)
+#   knowledge.sh setup                     guided intake wizard (interactive brain session)
 #   knowledge.sh init                      bare config + empty knowledge dir, no wizard
 #   knowledge.sh import <source-dir>       distill an existing notes folder (headless)
-#   knowledge.sh sync [days]               extract from integrations (interactive claude)
+#   knowledge.sh sync [days]               extract from integrations (interactive brain session)
 #   knowledge.sh pack [--next | --person "<name>" | --paste] [--out <file>]
 #   knowledge.sh merge                     consolidate meeting raw signals into truth records (headless)
 #   knowledge.sh events [hours]            upcoming calendar events JSON (needs the gws CLI)
 #
 # Execution modes, and why:
-#   - import + pack(--person/--paste) run `claude -p` HEADLESS with file tools
+#   - import + pack(--person/--paste) run the brain HEADLESS with file tools
 #     only. Headless agents can't reliably reach MCP integrations (server names
 #     differ per session), so anything needing only files runs unattended.
 #   - pack(--next) runs HEADLESS too when the `gws` CLI is installed: the
 #     script fetches the next 12h of calendar events itself and embeds them
 #     in the prompt. Without gws it falls back to an interactive session.
-#   - sync (and pack --next without gws) launch `claude` INTERACTIVELY: they
+#   - sync (and pack --next without gws) launch the brain INTERACTIVELY: they
 #     need your connected integrations (calendar, email, meeting notes, docs)
 #     and you approve each tool the first time it's used.
+#
+# The brain is `claude` by default; MODEL_PROVIDER="codex" in the config (or
+# COPILOT_PROVIDER env) runs every mode on `codex` instead — the prompts are
+# provider-neutral. Integrations then come from YOUR codex MCP config: codex
+# sessions see whatever MCP servers you set up in ~/.codex, not claude's
+# connectors.
 set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 CONF="${HOME}/.meeting-copilot/config"
+
+# Resolved lazily: MODEL_PROVIDER arrives via `source "$CONF"`, which happens
+# at different points per command (setup sources it conditionally, the rest
+# after the config gate).
+brain_bin() { echo "${COPILOT_PROVIDER:-${MODEL_PROVIDER:-claude}}"; }
 
 usage() { sed -n '3,11p' "$0"; exit 1; }
 
@@ -89,9 +100,9 @@ if [ "$CMD" = "setup" ]; then
                 -e "s|{{SPEC_PATH}}|${SPEC}|g" \
                 -e "s|{{PROMPTS_DIR}}|${DIR}/prompts|g" \
                 "$DIR/prompts/setup-wizard.md")"
-  echo "setup: opening an interactive claude session — the wizard interviews you (~10-15 min)," >&2
+  echo "setup: opening an interactive $(brain_bin) session — the wizard interviews you (~10-15 min)," >&2
   echo "setup: checks which integrations are connected, and builds ${KDIR}." >&2
-  exec claude "$PROMPT"
+  exec "$(brain_bin)" "$PROMPT"
 fi
 
 if [ "$CMD" = "init" ]; then
@@ -159,12 +170,34 @@ fill() { # fill <template> KEY=VALUE...
   printf '%s' "$text"
 }
 
-headless() { # headless <prompt> — file tools only, verified by caller
-  claude -p "$1" --allowedTools Read Grep Glob Write Edit --output-format json |
-    node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
-      if(!s.trim()){process.stderr.write("claude -p produced no output (auth? rate limit?)\n");process.exit(1);}
-      try{const j=JSON.parse(s);process.stderr.write((j.result||"").trim()+"\n");process.exit(j.is_error?1:0);}
-      catch{process.stderr.write("could not parse claude output\n");process.exit(1);}});'
+headless() { # headless <prompt> [extra-writable-dir...] — file tools only, verified by caller
+  if [ "$(brain_bin)" = codex ]; then
+    # codex is an agent with file tools built in; the sandbox does the scoping
+    # the claude path gets from --allowedTools: writes land in the knowledge
+    # dir (the workspace), ~/.meeting-copilot, and any dir the caller names
+    # (pack --out can point anywhere); reads are unrestricted either way.
+    # ${extra[@]+...}: macOS /bin/bash is 3.2, where "${extra[@]}" on an empty
+    # array trips set -u.
+    local extra=()
+    local d; for d in "${@:2}"; do extra+=(--add-dir "$d"); done
+    codex exec "$1" --json --skip-git-repo-check --color never \
+      -s workspace-write -C "$KNOWLEDGE_DIR" --add-dir "${HOME}/.meeting-copilot" ${extra[@]+"${extra[@]}"} |
+      node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
+        let msg="",err="";
+        for(const line of s.split("\n")){let j;try{j=JSON.parse(line)}catch{continue}
+          if(j.type==="item.completed"&&j.item&&j.item.type==="agent_message")msg=j.item.text||msg;
+          if(j.type==="error")err=j.message||err;
+          if(j.type==="turn.failed")err=(j.error&&j.error.message)||err;}
+        if(err){process.stderr.write(err.trim()+"\n");process.exit(1);}
+        if(!msg.trim()){process.stderr.write("codex exec produced no output (auth? rate limit?)\n");process.exit(1);}
+        process.stderr.write(msg.trim()+"\n");});'
+  else
+    claude -p "$1" --allowedTools Read Grep Glob Write Edit --output-format json |
+      node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
+        if(!s.trim()){process.stderr.write("claude -p produced no output (auth? rate limit?)\n");process.exit(1);}
+        try{const j=JSON.parse(s);process.stderr.write((j.result||"").trim()+"\n");process.exit(j.is_error?1:0);}
+        catch{process.stderr.write("could not parse claude output\n");process.exit(1);}});'
+  fi
 }
 
 case "$CMD" in
@@ -176,9 +209,9 @@ case "$CMD" in
     ;;
   sync)
     DAYS="${1:-7}"
-    echo "sync: opening an interactive claude session (integrations need per-tool approval)." >&2
+    echo "sync: opening an interactive $(brain_bin) session (integrations need per-tool approval)." >&2
     echo "sync: it will extract from the last ${DAYS} days into ${KNOWLEDGE_DIR}." >&2
-    claude "$(fill "$DIR/prompts/sync-knowledge.md" "LOOKBACK_DAYS=$DAYS")"
+    "$(brain_bin)" "$(fill "$DIR/prompts/sync-knowledge.md" "LOOKBACK_DAYS=$DAYS")"
     # Stamp freshness so prep/live can say how old the knowledge is. The
     # session already ended, so this marks "last attempted+finished sync".
     set_conf KNOWLEDGE_SYNCED_AT "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -218,13 +251,13 @@ $EVENTS"
         MODE="headless"
         echo "pack: calendar fetched via the gws CLI — running headless." >&2
       else
-        echo "pack: no gws calendar data (no events, or CLI not authed) — falling back to interactive claude." >&2
+        echo "pack: no gws calendar data (no events, or CLI not authed) — falling back to interactive $(brain_bin)." >&2
       fi
     fi
     PROMPT="$(fill "$DIR/prompts/build-prep-pack.md" "TARGET=$TARGET" "OUTPUT=$OUT")"
-    if [ "$MODE" = "headless" ]; then headless "$PROMPT"; else
-      echo "pack: --next needs your calendar integration; opening interactive claude." >&2
-      claude "$PROMPT"
+    if [ "$MODE" = "headless" ]; then headless "$PROMPT" "$(dirname "$OUT")"; else
+      echo "pack: --next needs your calendar integration; opening interactive $(brain_bin)." >&2
+      "$(brain_bin)" "$PROMPT"
     fi
     # The agent's own report is not proof. Verify the artifact.
     if [ ! -s "$OUT" ] || [ "$(wc -c < "$OUT")" -lt 300 ]; then

@@ -28,7 +28,7 @@ import { readFileSync, existsSync, appendFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadSystem, streamBrain, buildCheckUser, capSummary, renderTemplate, USER_NAME, CARD_CAPS } from "./lib.mjs";
+import { loadSystem, streamBrain, buildCheckUser, capSummary, renderTemplate, USER_NAME, CARD_CAPS, setProvider, providerName } from "./lib.mjs";
 import { parseFacts, matchWindow, matchGuard } from "./matcher.mjs";
 import { makeAmbient, finishAmbient } from "./ambient.mjs";
 
@@ -48,6 +48,7 @@ const MIN_GAP_SEC = Number(val("--min-gap", CARD_CAPS.replay.minGapSec)); // don
 const cardsOut = val("--cards-out", null);
 const traceOut = val("--trace", null);   // per-tick {atSec, action, question, summary} — makes a bad card reconstructible
 const model = val("--model", null);
+setProvider(val("--provider", null));   // claude (default) or codex
 const dryRun = has("--dry-run");
 // --fast: the low-latency path. A local matcher finds candidate facts (0.17ms);
 // only those go to the model, with a short contract and no extended thinking.
@@ -79,7 +80,7 @@ async function callBrain(userText) {
   const { json, raw, error } = await streamBrain({ system: SYSTEM, user: userText, model });
   if (!json) {
     if (raw) console.error("brain: unparseable model output:", raw.slice(0, 200));
-    else console.error(`brain: claude -p produced no output${error ? ` — ${error}` : ""}`);
+    else console.error(`brain: ${providerName()} produced no output${error ? ` — ${error}` : ""}`);
     return { action: "silent", _error: true };
   }
   return json;
