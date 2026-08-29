@@ -37,12 +37,18 @@ command -v swiftc >/dev/null 2>&1 ||
 command -v node >/dev/null 2>&1 ||
   die "node not found. The brain is plain Node (no packages):
   brew install node   (or https://nodejs.org)"
-HAVE_CLAUDE=1
-command -v claude >/dev/null 2>&1 || {
-  HAVE_CLAUDE=0
-  say "WARNING: claude CLI not found. Capture will work, but the brain (the"
-  say "         part that surfaces cards) runs on Claude Code. Install it and"
-  say "         log in: https://claude.com/claude-code"
+# The brain CLI: claude by default, codex when MODEL_PROVIDER (or the
+# COPILOT_PROVIDER env var) is set to codex — then claude is not needed at all.
+BRAIN="${COPILOT_PROVIDER:-$(sed -n 's/^MODEL_PROVIDER="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$HOME/.meeting-copilot/config" 2>/dev/null | tail -1)}"
+BRAIN="${BRAIN:-claude}"
+BRAIN_URL="https://claude.com/claude-code"
+[ "$BRAIN" = codex ] && BRAIN_URL="https://github.com/openai/codex"
+HAVE_BRAIN=1
+command -v "$BRAIN" >/dev/null 2>&1 || {
+  HAVE_BRAIN=0
+  say "WARNING: $BRAIN CLI not found. Capture will work, but the brain (the"
+  say "         part that surfaces cards) runs on it. Install it and"
+  say "         log in: $BRAIN_URL"
 }
 command -v qmd >/dev/null 2>&1 ||
   say "note: qmd not installed — live recall over your knowledge dir stays off (optional; https://github.com/tobi/qmd)"
@@ -133,7 +139,7 @@ RC=$?
 say ""
 if [ $RC -eq 0 ]; then
   say "SETUP COMPLETE."
-  [ "$HAVE_CLAUDE" = 1 ] || say "Still needed: install Claude Code and log in (https://claude.com/claude-code)."
+  [ "$HAVE_BRAIN" = 1 ] || say "Still needed: install the $BRAIN CLI and log in ($BRAIN_URL)."
   if [ ! -f "${HOME}/.meeting-copilot/config" ]; then
     say "Next: build your knowledge dir — ./portable/knowledge.sh setup   (guided, ~10-15 min)"
     say "      or the bare minimum:      ./portable/knowledge.sh init"

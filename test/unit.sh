@@ -51,9 +51,11 @@ is "$NODE_READ" "36" "config: loadConfig agrees with bash"
 # which looks like a bug and is not one.
 KS="$SANDBOX/ks"; mkdir -p "$KS/.meeting-copilot"
 ks() { HOME="$KS" bash -c 'source "$1/cli/common.sh"; knowledge_state' _ "$ROOT"; }
-ks_noclaude() { HOME="$KS" PATH="/usr/bin:/bin" bash -c 'source "$1/cli/common.sh"; knowledge_state' _ "$ROOT"; }
+ks_nobrain() { HOME="$KS" PATH="/usr/bin:/bin" bash -c 'source "$1/cli/common.sh"; knowledge_state' _ "$ROOT"; }
 
-is "$(ks_noclaude)" "no-claude" "knowledge_state: no claude CLI"
+is "$(ks_nobrain)" "no-brain" "knowledge_state: no brain CLI (claude, default provider)"
+# Provider-aware: with MODEL_PROVIDER set to codex, codex is what must exist.
+is "$(COPILOT_PROVIDER=codex ks_nobrain)" "no-brain" "knowledge_state: provider codex, codex missing"
 if command -v claude >/dev/null 2>&1; then
   is "$(ks)" "no-config" "knowledge_state: no config"
   printf 'USER_NAME="T"\n' > "$KS/.meeting-copilot/config"
@@ -64,6 +66,11 @@ if command -v claude >/dev/null 2>&1; then
   is "$(ks)" "empty-knowledge" "knowledge_state: knowledge dir exists but is empty"
   printf '# Dana\n' > "$KS/kb/people/dana.md"
   is "$(ks)" "ok" "knowledge_state: notes present -> ok"
+  # Provider codex with codex present and claude ABSENT: claude must not be
+  # required (the shim stands in for the binary; only `command -v` matters).
+  CODEXBIN="$SANDBOX/codexbin"; mkdir -p "$CODEXBIN"; ln -s "$DIR/shim/codex" "$CODEXBIN/codex"
+  is "$(COPILOT_PROVIDER=codex HOME="$KS" PATH="$CODEXBIN:/usr/bin:/bin" bash -c 'source "$1/cli/common.sh"; knowledge_state' _ "$ROOT")" \
+     "ok" "knowledge_state: provider codex needs codex, not claude"
 else
   ok "knowledge_state: post-claude cases skipped (no claude CLI on PATH)"
 fi

@@ -9,7 +9,12 @@ https://github.com/user-attachments/assets/c2f8c7fc-9a1b-42ce-b2b9-11097524029e
 
 ## What you need
 
-A Mac on macOS 26 or later. Claude Code, logged in, any paid plan. 
+A Mac on macOS 26 or later. Claude Code, logged in, any paid plan — or
+OpenAI's codex CLI on a ChatGPT plan (`COPILOT_PROVIDER=codex ./copilot onboard`).
+
+Building knowledge from calendar, email or Slack (instead of a notes folder)
+needs those integrations connected in whichever CLI you use — connectors or
+MCP servers, set up in claude or codex.
 
 ## Getting it running
 
@@ -78,5 +83,6 @@ headphones, `--room` in person.
 [portable/README.md](portable/README.md) the notes layer.
 
 Flags: `--cap` (20 per 30 min), `--min-gap` (0), `--no-screen`,
-`--no-vision`, `--no-recall`, `--keep-session`, `--externals`, `--prep`.
+`--no-vision`, `--no-recall`, `--keep-session`, `--externals`, `--prep`,
+`--provider` (claude or codex).
 Broken? `./copilot doctor` takes two seconds.

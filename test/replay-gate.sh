@@ -16,11 +16,15 @@ set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 OUT="$(mktemp -d)/cards.jsonl"
 
-# Preflight: with a dead claude login the gate fails as "no cards emitted",
+# Preflight: with a dead login the gate fails as "no cards emitted",
 # which reads as a brain regression and sends you debugging the wrong layer
 # (seen 2026-08-11: expired OAuth refresh while `auth status` said loggedIn).
-("$DIR/../cli/doctor.sh" --probe 2>/dev/null || true) | grep -q "ok    claude live probe" \
-  || { echo "GATE ABORT: claude CLI cannot complete a live call — fix login first (claude auth login; verify: copilot doctor --probe)" >&2; exit 2; }
+# The gate runs on whichever provider COPILOT_PROVIDER selects (default
+# claude; `COPILOT_PROVIDER=codex ./test/replay-gate.sh` is the codex gate —
+# same fixture, same baseline), so probe THAT provider's login.
+GATE_PROVIDER="${COPILOT_PROVIDER:-claude}"
+("$DIR/../cli/doctor.sh" --probe 2>/dev/null || true) | grep -q "ok    $GATE_PROVIDER live probe" \
+  || { echo "GATE ABORT: $GATE_PROVIDER CLI cannot complete a live call — fix login first ($GATE_PROVIDER auth/login; verify: COPILOT_PROVIDER=$GATE_PROVIDER copilot doctor --probe)" >&2; exit 2; }
 
 node "$DIR/../brain/brain-loop.mjs" \
   --replay "$DIR/fixtures/rivertech/fixture.jsonl" \

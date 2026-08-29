@@ -60,33 +60,39 @@ case "${1:-}" in
     # be detected silently, so a user could finish onboarding never knowing live
     # recall or the meeting list existed — which is the complaint this closes.
     "$ROOT/onboarding/integrations.sh" || true
-    # The main event: connect + ingest the knowledge base (wizard needs claude).
+    # The main event: connect + ingest the knowledge base (wizard needs the
+    # brain CLI — claude by default, codex when MODEL_PROVIDER or the
+    # COPILOT_PROVIDER env var is set to codex; with codex, claude is not
+    # needed at all and integrations come from the user's own codex MCP config).
     # Every branch that does NOT end with a usable knowledge dir is recorded, so
     # the summary at the bottom can refuse to say MEETING-READY. It used to say
-    # it unconditionally: a missing claude CLI skipped the wizard with one line
+    # it unconditionally: a missing brain CLI skipped the wizard with one line
     # mid-scroll, and onboarding still signed off — leaving compiled binaries,
     # no knowledge base, and a user who thinks they are done.
+    BRAIN="$(brain_bin)"
+    BRAIN_URL="https://claude.com/claude-code"
+    [ "$BRAIN" = codex ] && BRAIN_URL="https://github.com/openai/codex"
     KSTATE=ok
-    if ! command -v claude >/dev/null 2>&1; then
-      KSTATE=no-claude
+    if ! command -v "$BRAIN" >/dev/null 2>&1; then
+      KSTATE=no-brain
       echo "" >&2
-      echo "STOP: the claude CLI is not installed. It is not optional — it IS the brain," >&2
+      echo "STOP: the $BRAIN CLI is not installed. It is not optional — it IS the brain," >&2
       echo "so nothing can run without it, knowledge base included. Compiling the capture" >&2
       echo "binaries anyway so that part is done, but this is a TWO-STEP install now:" >&2
-      echo "  1. install + log in:  https://claude.com/claude-code" >&2
+      echo "  1. install + log in:  $BRAIN_URL" >&2
       echo "  2. come back and run: copilot onboard knowledge" >&2
       echo "" >&2
-    elif ! "$ROOT/cli/doctor.sh" --probe 2>/dev/null | grep -q "ok    claude live probe"; then
+    elif ! "$ROOT/cli/doctor.sh" --probe 2>/dev/null | grep -q "ok    $BRAIN live probe"; then
       # The CLI is installed but a real call fails (expired OAuth refresh, dead
-      # network). `claude auth status` cannot catch this — it reads local state
-      # and keeps saying loggedIn:true. Without the probe, onboarding burns the
+      # network). Local auth-status reads cannot catch this — they keep saying
+      # logged-in. Without the probe, onboarding burns the
       # wizard on a dead brain and the failure surfaces as three unrelated-
       # looking errors downstream.
-      KSTATE=claude-dead
+      KSTATE=brain-dead
       echo "" >&2
-      echo "STOP: the claude CLI is installed but a live call FAILED — the brain cannot" >&2
+      echo "STOP: the $BRAIN CLI is installed but a live call FAILED — the brain cannot" >&2
       echo "answer, so the knowledge wizard would die mid-session. Most common cause is an" >&2
-      echo "expired login:  claude auth login   then re-run:  copilot onboard knowledge" >&2
+      echo "expired login:  $([ "$BRAIN" = codex ] && echo "codex login" || echo "claude auth login")   then re-run:  copilot onboard knowledge" >&2
       echo "" >&2
     elif [ ! -f "$CONF" ]; then
       # set -e would abort onboarding mid-way if the wizard exits non-zero,
@@ -149,16 +155,16 @@ case "${1:-}" in
       ok)
         echo "MEETING-READY. At meeting time:  copilot live   (packs are already built; re-prep anytime: copilot prep list)" >&2
         ;;
-      no-claude)
+      no-brain)
         echo "NOT READY — capture binaries are built, but there is no brain and no knowledge base." >&2
-        echo "  1. install + log in:  https://claude.com/claude-code" >&2
+        echo "  1. install + log in:  $BRAIN_URL" >&2
         echo "  2. then run:          copilot onboard knowledge" >&2
         exit 1
         ;;
-      claude-dead)
-        echo "NOT READY — the claude CLI is installed but a live call fails (expired login" >&2
+      brain-dead)
+        echo "NOT READY — the $BRAIN CLI is installed but a live call fails (expired login" >&2
         echo "or dead network); every brain call would fail the same way at meeting time." >&2
-        echo "  1. re-login:  claude auth login    (verify: copilot doctor --probe)" >&2
+        echo "  1. re-login:  $([ "$BRAIN" = codex ] && echo "codex login" || echo "claude auth login")    (verify: copilot doctor --probe)" >&2
         echo "  2. then run:  copilot onboard knowledge" >&2
         exit 1
         ;;
