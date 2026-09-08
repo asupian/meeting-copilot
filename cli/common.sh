@@ -12,12 +12,23 @@ LEGACY_PACK="${HOME}/.meeting-copilot/prep-pack.md"
 export ORG_DOMAIN="${ORG_DOMAIN:-}"   # cli/events.mjs uses it to flag external meetings
 LOOKAHEAD="${PREP_LOOKAHEAD_H:-12}"
 
-knowledge_state() { # -> ok | no-claude | no-config | no-knowledge-dir | empty-knowledge
+# Which CLI is the brain: claude (default) or codex. Mirrors lib.mjs provider
+# resolution (COPILOT_PROVIDER env > MODEL_PROVIDER in config > claude); the
+# config is RE-READ because it may be written after common.sh sourced it.
+brain_bin() {
+  local p
+  p="${COPILOT_PROVIDER:-$(sed -n 's/^MODEL_PROVIDER="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$CONF" 2>/dev/null | tail -1)}"
+  echo "${p:-claude}"
+}
+
+knowledge_state() { # -> ok | no-brain | no-config | no-knowledge-dir | empty-knowledge
   # Is there actually something for the copilot to cite? A config file is not a
   # knowledge base and an installed binary is not a brain, but onboarding used
   # to treat both as "done" and sign off MEETING-READY regardless. Kept here so
   # it is one testable answer rather than three ad-hoc checks that drift apart.
-  command -v claude >/dev/null 2>&1 || { echo no-claude; return; }
+  # The brain is whichever provider is configured — with MODEL_PROVIDER=codex,
+  # claude is not required at all (knowledge + prep + live all run on codex).
+  command -v "$(brain_bin)" >/dev/null 2>&1 || { echo no-brain; return; }
   [ -f "$CONF" ] || { echo no-config; return; }
   # $CONF may have been written after common.sh sourced it (the wizard runs
   # mid-onboard), so re-read rather than trusting the startup snapshot.

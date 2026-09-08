@@ -1,0 +1,36 @@
+#!/bin/bash
+# A fake `codex` for deterministic brain tests — the codex twin of ./claude.
+# Put this directory FIRST on PATH and live.mjs/brain-loop.mjs run against it
+# with --provider codex — zero model calls, instant responses, full prompt
+# capture. Used by test/live-checks.sh (which runs its suite once per provider).
+#
+# Env contract (identical to ./claude):
+#   PROMPT_CAPTURE=<stem>   REQUIRED. Each call appends its stdin (the whole
+#                           prompt) to <stem>.user.<n> (n auto-increments).
+#   SHIM_CARD_TYPE=<type>   card `type` emitted (default: collision).
+#   SHIM_DEAD=1             emit nothing and exit 0 — simulates a dead model.
+#   SHIM_HANG=1             take the prompt, then never exit.
+#
+# Differences mirror the real provider (see lib.mjs streamCodex):
+#   - codex has no --system-prompt: the contract rides at the top of stdin,
+#     so ambient-extraction calls are detected by grepping the CAPTURED PROMPT
+#     for "ambient listener" (unique to contract-ambient.md) instead of args.
+#   - output is `codex exec --json` JSONL: the agent_message arrives COMPLETE
+#     in one item.completed event — no token deltas, exactly like real codex.
+n=$(ls "${PROMPT_CAPTURE:?set PROMPT_CAPTURE}".user.* 2>/dev/null | wc -l | tr -d ' '); n=$((n+1))
+cat > "$PROMPT_CAPTURE.user.$n"
+[ -n "${SHIM_DEAD:-}" ] && exit 0
+# Stall forever. The parent must kill this; if the test hangs instead of
+# failing, the timeout regressed.
+[ -n "${SHIM_HANG:-}" ] && { while :; do sleep 60; done; }
+echo '{"type":"thread.started","thread_id":"shim"}'
+if grep -q "ambient listener" "$PROMPT_CAPTURE.user.$n"; then
+  node -e 'const j={commitments:[],questions:[{text:"What is the margin impact of the new pricing?",asked_by:"the user"}],answered_ids:[]};console.log(JSON.stringify({type:"item.completed",item:{id:"item_0",type:"agent_message",text:JSON.stringify(j)}}));'
+else
+  N="$n" node -e '
+const t = process.env.SHIM_CARD_TYPE || "collision";
+const j = {action:"card",question:`Deterministic Q ${process.env.N} on the SOW number?`,type:t,why:"test",
+  source:"Rivertech SOW quote — $42,500 fixed",now:{topic:"pricing",speakers:[],bearing:"neutral",note:""},summary:"rolling"};
+console.log(JSON.stringify({type:"item.completed",item:{id:"item_0",type:"agent_message",text:JSON.stringify(j)}}));'
+fi
+echo '{"type":"turn.completed","usage":{"input_tokens":0,"output_tokens":0}}'

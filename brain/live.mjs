@@ -26,7 +26,7 @@ import { readFileSync, readdirSync, existsSync, watch, appendFileSync, writeFile
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadSystem, streamBrain, brainInFlight, partialString, buildCheckUser, capSummary, CONFIG, USER_NAME, CARD_TYPES, CARD_CAPS } from "./lib.mjs";
+import { loadSystem, streamBrain, brainInFlight, partialString, buildCheckUser, capSummary, CONFIG, USER_NAME, CARD_TYPES, CARD_CAPS, setProvider, providerName } from "./lib.mjs";
 import { parseFacts, matchGuard, matchWindow } from "./matcher.mjs";
 import { makeAmbient, finishAmbient } from "./ambient.mjs";
 import { makeRecall } from "./recall.mjs";
@@ -58,6 +58,9 @@ const MAX_WAIT_MS = Number(val("--max-wait", 15)) * 1000;
 const CAP = Number(val("--cap", CARD_CAPS.live.cap));   // opine freely; the model is still the bar
 const MIN_GAP_SEC = Number(val("--min-gap", CARD_CAPS.live.minGapSec));  // removed by default — the model self-limits
 const MODEL = val("--model", null);
+// Which CLI serves the brain: claude (default) or codex (`codex exec`, a
+// ChatGPT subscription login). Also settable via MODEL_PROVIDER in config.
+setProvider(val("--provider", null));
 // null = inherit the model default (thinking on). --think 0 disables it: much
 // faster to first word, but only usable with a contract that makes the model do
 // its cross-referencing explicitly (see experimental/contract-fast.md).
@@ -458,8 +461,8 @@ async function check() {
   // fake "silent".
   if (failed) {
     brainFailures++;
-    console.error(`brain: model call FAILED — nothing returned (check \`claude\` login / network); ${brainFailures} consecutive`);
-    broadcast({ type: "brainDown", count: brainFailures });
+    console.error(`brain: model call FAILED — nothing returned (check \`${providerName()}\` login / network); ${brainFailures} consecutive${error ? ` — ${error}` : ""}`);
+    broadcast({ type: "brainDown", count: brainFailures, bin: providerName(), reason: error || "" });
     traceCheck({ atSec: nowPre, canShow, failed: true, timedOut: perf.timedOut, userPrompt, perf });
     pending = lines.concat(pending);
     return;
@@ -713,10 +716,14 @@ async function runVision() {
   if (!forAt || chartReadAtMs === forAt) return;   // already read this slide
   visionInFlight = true;
   try {
+    // claude reads the frame via its Read tool; codex has no tool opt-in but
+    // attaches images first-class (-i), so each provider gets its own phrasing.
+    const attach = providerName() === "codex";
     const { json } = await streamBrain({
-      system: 'You describe charts in a meeting-slide screenshot. Use the Read tool to open the image path you are given. Respond ONLY with JSON: {"chart":"1-2 sentences: metric, direction/trend, inflection points, rough magnitudes — only what is visibly on the chart"} or {"chart":null} when no chart/graph is visible. Never invent numbers.',
-      user: `Read ${FRAME} and report. JSON only.`,
+      system: `You describe charts in a meeting-slide screenshot. ${attach ? "The screenshot is attached." : "Use the Read tool to open the image path you are given."} Respond ONLY with JSON: {"chart":"1-2 sentences: metric, direction/trend, inflection points, rough magnitudes — only what is visibly on the chart"} or {"chart":null} when no chart/graph is visible. Never invent numbers.`,
+      user: attach ? "Describe the charts in the attached slide image. JSON only." : `Read ${FRAME} and report. JSON only.`,
       tools: "Read",
+      image: attach ? FRAME : undefined,
       thinkTokens: 0,
       model: MODEL,
     });
@@ -849,6 +856,7 @@ server.listen(PORT, "127.0.0.1", () => {
   traceCheck({ session: MEETING_TITLE, system: SYSTEM });   // once: makes any later card fully reconstructible
   console.error(`live: watching ${TRANSCRIPT}`);
   console.error(`live: debounce ${DEBOUNCE_MS}ms, max-wait ${MAX_WAIT_MS / 1000}s, cap ${CAP}/30min${AMBIENT_ON ? ", ambient on" : ""}`);
+  if (providerName() !== "claude") console.error(`live: brain provider ${providerName()}${MODEL ? ` (model ${MODEL})` : ""} — cards appear whole (no token streaming) on this provider`);
   console.error(`live: mic mode ${MODE}${MODE === "ptt" ? " -- hold the panel's \"talk\" button while you speak (mic is otherwise dropped as speaker echo)" : ""}`);
   console.error(`live: recall ${RECALL_ON ? `on -- ${QMD_BIN} whole-repo, off critical path` : "off"}`);
   // Stale knowledge looks exactly like fresh knowledge on a card — say it here.

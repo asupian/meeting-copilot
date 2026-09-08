@@ -14,6 +14,10 @@ bad()  { printf 'FAIL  %s\n' "$*"; FAIL=1; }
 OSVER="$(sw_vers -productVersion 2>/dev/null || echo 0)"
 [ "${OSVER%%.*}" -ge 26 ] 2>/dev/null && ok "macOS $OSVER" || bad "macOS $OSVER — 26+ required (on-device transcriber)"
 command -v node   >/dev/null 2>&1 && ok "node $(node -v)" || bad "node missing (brew install node)"
+# The configured brain provider decides which CLI is REQUIRED (bad) versus
+# merely useful (warn). With MODEL_PROVIDER=codex everything — knowledge,
+# prep, live — runs on codex, so a missing claude no longer blocks.
+BRAIN="$(brain_bin)"
 if command -v claude >/dev/null 2>&1; then
   # `claude auth status` is free (no model call, ~0.2s) and catches the worst
   # first-run trap: binary present, login missing — which otherwise surfaces
@@ -21,15 +25,17 @@ if command -v claude >/dev/null 2>&1; then
   AUTHJ="$(claude auth status 2>/dev/null || true)"
   case "$AUTHJ" in
     *'"loggedIn": true'*)  ok "claude CLI (logged in)" ;;
-    *'"loggedIn": false'*) bad "claude CLI not logged in — run: claude auth login" ;;
+    *'"loggedIn": false'*) [ "$BRAIN" = claude ] && bad "claude CLI not logged in — run: claude auth login" \
+                             || warn "claude CLI not logged in (fine: brain provider is $BRAIN)" ;;
     *)                     ok "claude CLI (login state unknown — CLI predates 'auth status')" ;;
   esac
-  # --probe: one real haiku call (~2-5s). `auth status` reads LOCAL state and
-  # keeps saying loggedIn:true after the refresh token dies server-side — a
-  # state where every brain call fails (seen 2026-08-11). Only a live call
-  # proves the brain will answer, so onboarding and the replay gate run this;
-  # the plain sweep stays model-free.  macOS ships no timeout(1): watchdog.
-  if [ "${1:-}" = "--probe" ]; then
+  # --probe: one real model call (~2-5s), on the PROVIDER THE BRAIN USES.
+  # Local auth-status reads keep saying logged-in after the refresh token dies
+  # server-side — a state where every brain call fails (seen 2026-08-11). Only
+  # a live call proves the brain will answer, so onboarding and the replay
+  # gate run this; the plain sweep stays model-free.  macOS ships no
+  # timeout(1): watchdog.
+  if [ "${1:-}" = "--probe" ] && [ "$BRAIN" = claude ]; then
     PROBE_OUT="$(mktemp)"
     claude -p "Reply with exactly: OK" --model claude-haiku-4-5-20251001 >"$PROBE_OUT" 2>&1 &
     PROBE_PID=$!
@@ -44,7 +50,36 @@ if command -v claude >/dev/null 2>&1; then
     rm -f "$PROBE_OUT"
   fi
 else
-  bad "claude CLI missing — the brain runs on it (https://claude.com/claude-code)"
+  [ "$BRAIN" = claude ] && bad "claude CLI missing — the brain runs on it (https://claude.com/claude-code)" \
+    || warn "claude CLI missing (fine: MODEL_PROVIDER=$BRAIN runs everything on $BRAIN)"
+fi
+if [ "$BRAIN" = "codex" ]; then
+  if ! command -v codex >/dev/null 2>&1; then
+    bad "MODEL_PROVIDER=codex but codex CLI missing — install it, or: copilot config set MODEL_PROVIDER claude"
+  else
+    # `codex login status` reads local state, same trap as `claude auth status`:
+    # it can say logged-in after the token dies server-side. --probe below is
+    # the only proof a live call answers.
+    case "$(codex login status 2>&1)" in
+      *"Logged in"*) ok "codex CLI (logged in) — live brain provider" ;;
+      *)             bad "codex CLI not logged in — run: codex login" ;;
+    esac
+    if [ "${1:-}" = "--probe" ]; then
+      PROBE_OUT="$(mktemp)"
+      codex exec "Reply with exactly: OK" --ephemeral --skip-git-repo-check --ignore-user-config \
+        -s read-only -C /tmp --color never >"$PROBE_OUT" 2>&1 &
+      PROBE_PID=$!
+      ( sleep 30; kill "$PROBE_PID" 2>/dev/null ) & WATCHDOG=$!
+      wait "$PROBE_PID" 2>/dev/null; PROBE_RC=$?
+      kill "$WATCHDOG" 2>/dev/null; wait "$WATCHDOG" 2>/dev/null
+      if [ "$PROBE_RC" = 0 ] && grep -q "OK" "$PROBE_OUT"; then
+        ok "codex live probe (a real call round-tripped)"
+      else
+        bad "codex live probe FAILED — $(tail -1 "$PROBE_OUT" 2>/dev/null | cut -c1-120)${PROBE_RC:+ (exit $PROBE_RC)} — try: codex login"
+      fi
+      rm -f "$PROBE_OUT"
+    fi
+  fi
 fi
 command -v swiftc >/dev/null 2>&1 && ok "swiftc" || bad "swiftc missing (xcode-select --install)"
 # Optional deps
